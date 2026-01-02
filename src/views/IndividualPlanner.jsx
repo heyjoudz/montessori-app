@@ -213,7 +213,7 @@ function AddActivityModal({
           <div>
             <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Classroom</div>
             <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: '10px 12px', background: '#fff', fontWeight: 600, color: THEME.text }}>
-              {classroom?.name || '-'}
+              {classroom?.name || '—'}
             </div>
           </div>
 
@@ -598,9 +598,9 @@ export default function IndividualPlanner({
 
         <Card style={{ padding: 12, marginBottom: 24 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
-            <TopStat label={`To Present - ${monthLabel(activeDateObj)}`} value={topStats.p} tone="P" />
-            <TopStat label={`Practicing - ${monthLabel(activeDateObj)}`} value={topStats.w} tone="W" />
-            <TopStat label={`Aim - ${monthLabel(nextMonthObj)}`} value={topStats.a} tone="A" />
+            <TopStat label={`To Present — ${monthLabel(activeDateObj)}`} value={topStats.p} tone="P" />
+            <TopStat label={`Practicing — ${monthLabel(activeDateObj)}`} value={topStats.w} tone="W" />
+            <TopStat label={`Aim — ${monthLabel(nextMonthObj)}`} value={topStats.a} tone="A" />
             <TopStat label="Total (shown)" value={topStats.total} tone="TOTAL" />
           </div>
         </Card>

@@ -251,6 +251,7 @@ function QuickAddModal({
 // MAIN APP
 // ------------------------
 export default function App() {
+  const { user, profile, loading, signOut } = useAuth();
 
   const [viewState, setViewState] = useState('HOME');
 

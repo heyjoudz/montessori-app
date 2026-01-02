@@ -421,7 +421,7 @@ export default function ConfigurationView({ isReadOnly }) {
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                     <span>Week {week.week_number}</span>
                     <span style={{ fontWeight: 500, opacity: 0.85 }}>
-                      {week.date_range ? `- ${week.date_range}` : ''}
+                      {week.date_range ? `— ${week.date_range}` : ''}
                     </span>
                   </div>
 

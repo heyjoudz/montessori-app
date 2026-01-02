@@ -181,7 +181,7 @@ export default function MasterTimelineView({
       byWeek[w].sessions = sessions;
 
       const themes = byWeek[w].plans.map((x) => (x.theme || '').trim()).filter(Boolean);
-      byWeek[w].theme = themes[0] || '-';
+      byWeek[w].theme = themes[0] || '—';
 
       const notes = byWeek[w].plans.map((x) => (x.notes || '').trim()).filter(Boolean);
       byWeek[w].notes = Array.from(new Set(notes)).join(' • ');
@@ -266,7 +266,7 @@ export default function MasterTimelineView({
     setInlineWeekEdit({
       weekNum: weekObj.week,
       field,
-      val: field === 'theme' ? (weekObj.theme === '-' ? '' : weekObj.theme) : weekObj.notes,
+      val: field === 'theme' ? (weekObj.theme === '—' ? '' : weekObj.theme) : weekObj.notes,
       planIds: weekObj.plans.map(p => p.id)
     });
   };
@@ -586,7 +586,7 @@ export default function MasterTimelineView({
                                 </div>
                             ) : (
                                 <div style={{ marginTop: 8, fontSize: 12, fontWeight: 800, color: THEME.text, display:'flex', alignItems:'center', gap:6 }}>
-                                    Theme: <span style={{ fontWeight: 700, color: THEME.textMuted }}>{weekObj.theme !== '-' ? weekObj.theme : 'None'}</span>
+                                    Theme: <span style={{ fontWeight: 700, color: THEME.textMuted }}>{weekObj.theme !== '—' ? weekObj.theme : 'None'}</span>
                                     <span
                                         onClick={() => startInlineWeekEdit(weekObj, 'theme')}
                                         style={{fontSize:10, textDecoration:'underline', cursor:'pointer', color: THEME.brandPrimary}}
@@ -790,13 +790,13 @@ export default function MasterTimelineView({
                                                         {hasNote && tagStr ? (
                                                             <>
                                                                 <span style={{ color: THEME.text, fontWeight: 900 }}>{renderS1S2Italic(tagStr)}</span>
-                                                                <span style={{ margin: '0 6px' }}>-</span>
+                                                                <span style={{ margin: '0 6px' }}>—</span>
                                                                 <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
                                                             </>
                                                         ) : hasNote ? (
                                                             <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
                                                         ) : (
-                                                            <span style={{ color: THEME.text, fontWeight: 800 }}>{renderS1S2Italic(tagStr || '-')}</span>
+                                                            <span style={{ color: THEME.text, fontWeight: 800 }}>{renderS1S2Italic(tagStr || '—')}</span>
                                                         )}
                                                     </div>
                                                     <span
