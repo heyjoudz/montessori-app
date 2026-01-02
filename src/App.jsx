@@ -1,17 +1,19 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Component } from 'react';
 import { supabase } from './supabaseClient';
 import { useAuth } from './context/AuthContext';
 import LoginScreen from './LoginScreen';
-import { THEME, FontLoader, getStatusStyle, getSubjectStyle, SESSION_TYPE_STYLE } from './ui/theme';
+import { THEME, FontLoader } from './ui/theme';
 
-import { 
-  SUBJECT_KEYS, ACADEMIC_START, normalizeStatusCode, inferDashboardType, matchesTypeFilter, 
-  getSessionType, dateISO, safeDate, addDays, startOfWeekMonday, isDateInWeek, 
-  getWeekFromDate, getWeekStartFromAcademic, getWeekRangeLabel, getMonthName, 
-  getFirstName, getDisplayName, formatStudentName, renderS1S2Italic, 
-  getNormalizedItem, getSubActivityKey, normalizeKey, getSubActivityDisplay, 
-  groupWeekSessions, mixHex, CURR_CACHE, primeCurrCache, enrichCurrRefs, 
-  fetchAllRows, inputStyle, selectStyle 
+import {
+  normalizeStatusCode,
+  dateISO,
+  enrichCurrRefs,
+  fetchAllRows,
+  inputStyle,
+  selectStyle,
+  primeCurrCache,
+  getFirstName,
+  getDisplayName
 } from './utils/helpers';
 
 import Button from './components/ui/Button';
@@ -20,22 +22,51 @@ import Modal from './components/ui/Modal';
 import SearchableSelect from './components/ui/SearchableSelect';
 import Toast from './components/ui/Toast';
 import LoadingScreen from './components/ui/LoadingScreen';
-import MiniChip from './components/ui/MiniChip';
 import NavItem from './components/ui/NavItem';
-
-import KanbanColumn from './components/business/Kanban';
 
 import DashboardView from './views/DashboardView';
 import MasterTimelineView from './views/MasterTimelineView';
 import IndividualPlanner from './views/IndividualPlanner';
 import ConfigurationView from './views/ConfigurationView';
-// Geometric Icon Helpers
-const DiamondIcon = ({ color }) => (
-    <div style={{ width: 8, height: 8, background: color, transform: 'rotate(45deg)' }} />
-);
 
+// ------------------------
+// Error Boundary (prevents blank screen)
+// ------------------------
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(err) {
+    return { hasError: true, message: err?.message || 'Something went wrong.' };
+  }
+  componentDidCatch(err) {
+    console.error('UI ErrorBoundary caught:', err);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 24 }}>
+          <Card style={{ padding: 18 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: THEME.text }}>Oops — the page crashed.</div>
+            <div style={{ marginTop: 8, fontSize: 13, color: THEME.textMuted, lineHeight: 1.5 }}>
+              {this.state.message}
+            </div>
+            <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
+              <Button onClick={() => this.setState({ hasError: false, message: '' })}>Try again</Button>
+              <Button variant="ghost" onClick={() => window.location.reload()}>Reload</Button>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
-// --- QUICK ADD ---
+// ------------------------
+// Quick Add (Ctrl/Cmd + K) — kept as-is
+// ------------------------
 function QuickAddModal({
   open,
   onClose,
@@ -77,11 +108,7 @@ function QuickAddModal({
         .sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`))
         .map(s => {
           const c = classrooms.find(x => String(x.id) === String(s.classroom_id));
-          return {
-            value: s.id,
-            label: `${s.first_name} ${s.last_name}`,
-            hint: c?.name || ''
-          };
+          return { value: s.id, label: `${s.first_name} ${s.last_name}`, hint: c?.name || '' };
         })
     ];
   }, [students, classrooms]);
@@ -117,7 +144,9 @@ function QuickAddModal({
         status,
         date: d,
         notes: notes || '',
-        curriculum_activity_id: picked.id
+        curriculum_activity_id: picked.id,
+        curriculum_area_id: picked.curriculum_area_id,
+        curriculum_category_id: picked.category_id || picked.curriculum_category_id
       });
 
       onClose();
@@ -148,7 +177,7 @@ function QuickAddModal({
       onClose={onClose}
       width={820}
     >
-      <div style={{ display: 'grid', gap: 20 }}>
+      <div style={{ display: 'grid', gap: 16 }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <Button variant={mode === 'CURR' ? 'active' : 'ghost'} onClick={() => setMode('CURR')}>Curriculum Activity</Button>
           <Button variant={mode === 'CUSTOM' ? 'active' : 'ghost'} onClick={() => setMode('CUSTOM')}>Custom</Button>
@@ -166,7 +195,6 @@ function QuickAddModal({
             <option value="P">To Present</option>
             <option value="W">Practicing</option>
             <option value="M">Mastered</option>
-            <option value="A">Next Month Aim</option>
           </select>
           <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle()} />
         </div>
@@ -205,8 +233,8 @@ function QuickAddModal({
           style={{ ...inputStyle(), height: 90, resize: 'vertical' }}
         />
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 700 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600 }}>
             Tip: press <b>Ctrl/⌘ + K</b> anytime to open Quick Add.
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -219,15 +247,20 @@ function QuickAddModal({
   );
 }
 
-const PAGE_SIZE = 1000;
-
-// --- MAIN APP ---
+// ------------------------
+// MAIN APP
+// ------------------------
 export default function App() {
   const { user, profile, loading, signOut } = useAuth();
+
   const [viewState, setViewState] = useState('HOME');
-  const [activeDate, setActiveDate] = useState(dateISO(new Date())); 
+
+  // keep as ISO string ALWAYS (prevents Date/String mismatches)
+  const [activeDate, setActiveDate] = useState(dateISO(new Date()));
+
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
+
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [targetStudentId, setTargetStudentId] = useState(null);
 
@@ -240,9 +273,14 @@ export default function App() {
   const [classrooms, setClassrooms] = useState([]);
   const [students, setStudents] = useState([]);
   const [planItems, setPlanItems] = useState([]);
+
   const [curriculum, setCurriculum] = useState([]);
-  const [masterPlans, setMasterPlans] = useState([]);
-  const [planSessions, setPlanSessions] = useState([]);
+  const [curriculumAreas, setCurriculumAreas] = useState([]);
+  const [curriculumCategories, setCurriculumCategories] = useState([]);
+
+  const [masterPlans, setMasterPlans] = useState([]);     // term_plans
+  const [planSessions, setPlanSessions] = useState([]);   // term_plan_sessions
+
   const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
@@ -257,94 +295,97 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-useEffect(() => {
-  if (!user) return;
-  let alive = true;
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
 
-  async function loadCore() {
-    try {
-      // ✅ Core small tables first (fast)
-      const [cls, stus, acts, areas, cats, tPlans] = await Promise.all([
-        supabase.from('classrooms').select('*').order('name'),
-        supabase.from('students').select('*').order('first_name'),
-        supabase.from('curriculum_activities').select('*').order('sort_order'),
-        supabase.from('curriculum_areas').select('*').order('name'),
-        supabase.from('curriculum_categories').select('*').order('name'),
-        supabase.from('term_plans').select('*').order('week_number')
-      ]);
+    async function loadCore() {
+      try {
+        // Core tables first
+        const [cls, stus, acts, areas, cats, tPlans] = await Promise.all([
+          supabase.from('classrooms').select('*').order('name'),
+          supabase.from('students').select('*').order('first_name'),
+          supabase.from('curriculum_activities').select('*').order('sort_order'),
+          supabase.from('curriculum_areas').select('*').order('name'),
+          supabase.from('curriculum_categories').select('*').order('name'),
+          supabase.from('term_plans').select('*').order('week_number')
+        ]);
 
-      if (!alive) return;
+        if (!alive) return;
 
-      // prime cache FIRST
-      primeCurrCache({
-        activities: acts.data || [],
-        areas: areas.data || [],
-        categories: cats.data || []
-      });
+        // prime curriculum cache (used by enrichCurrRefs)
+        primeCurrCache({
+          activities: acts.data || [],
+          areas: areas.data || [],
+          categories: cats.data || []
+        });
 
-      setClassrooms(cls.data || []);
-      setStudents(stus.data || []);
-      setCurriculum(acts.data || []);
-      setMasterPlans(tPlans.data || []);
+        setClassrooms(cls.data || []);
+        setStudents(stus.data || []);
 
-      // ✅ Let UI render now (prevents “stuck on loading” through tunnel)
-      setInitialLoading(false);
+        setCurriculumAreas(areas.data || []);
+        setCurriculumCategories(cats.data || []);
 
-      // ✅ Heavy tables in background (won’t block UI)
-      loadHeavyInBackground();
-    } catch (e) {
-      console.error("Core Data Load Error", e);
-      if (alive) setInitialLoading(false); // avoid infinite splash
-      showToast?.({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load core data.' });
+        setCurriculum((acts.data || []).map(enrichCurrRefs));
+        setMasterPlans(tPlans.data || []);
+
+        // Render UI now (avoid tunnel “stuck loading”)
+        setInitialLoading(false);
+
+        // Heavy tables in background
+        loadHeavyInBackground();
+      } catch (e) {
+        console.error('Core Data Load Error', e);
+        if (alive) setInitialLoading(false);
+        showToast({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load core data.' });
+      }
     }
-  }
 
-  async function loadHeavyInBackground() {
-    try {
-      const allPlanItems = await fetchAllRows((from, to) =>
-        supabase
-          .from('plan_items')
-          .select('*')
-          .neq('status', 'Archived')
-          .order('id', { ascending: true })
-          .range(from, to)
-      );
+    async function loadHeavyInBackground() {
+      try {
+        const allPlanItems = await fetchAllRows((from, to) =>
+          supabase
+            .from('plan_items')
+            .select('*')
+            .neq('status', 'Archived')
+            .order('id', { ascending: true })
+            .range(from, to)
+        );
 
-      const allTermSessions = await fetchAllRows((from, to) =>
-        supabase
-          .from('term_plan_sessions')
-          .select('*')
-          .order('id', { ascending: true })
-          .range(from, to)
-      );
+        const allTermSessions = await fetchAllRows((from, to) =>
+          supabase
+            .from('term_plan_sessions')
+            .select('*')
+            .order('id', { ascending: true })
+            .range(from, to)
+        );
 
-      if (!alive) return;
+        if (!alive) return;
 
-      setPlanItems(
-        (allPlanItems || [])
-          .map(enrichCurrRefs)
-          .map(p => ({ ...p, status: normalizeStatusCode(p.status) }))
-      );
+        setPlanItems(
+          (allPlanItems || [])
+            .map(enrichCurrRefs)
+            .map(p => ({ ...p, status: normalizeStatusCode(p.status) }))
+        );
 
-      setPlanSessions(
-        (allTermSessions || []).map(enrichCurrRefs)
-      );
-    } catch (e) {
-      console.error("Heavy Data Load Error", e);
-      showToast?.({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load plan data.' });
+        setPlanSessions((allTermSessions || []).map(enrichCurrRefs));
+      } catch (e) {
+        console.error('Heavy Data Load Error', e);
+        showToast({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load plan data.' });
+      }
     }
-  }
 
-  loadCore();
-  return () => { alive = false; };
-}, [user]);
-
+    loadCore();
+    return () => { alive = false; };
+  }, [user]);
 
   const handleQuickAdd = async (payload) => {
     const student = students.find(s => s.id == payload.student_id);
     if (!student) return;
+
     const targetDate = payload.date ? new Date(payload.date) : new Date();
     const dISO = payload.date ? dateISO(targetDate) : null;
+
     const newItem = {
       classroom_id: student.classroom_id,
       teacher_id: user.id,
@@ -361,30 +402,44 @@ useEffect(() => {
       curriculum_area_id: payload.curriculum_area_id,
       curriculum_category_id: payload.curriculum_category_id
     };
-const { data, error } = await supabase
-  .from('plan_items')
-  .insert([newItem])
-  .select('*');
 
-if (error) showToast({ type: 'error', title: 'Error', message: error.message });
-else if (data?.[0]) {
-  const enriched = enrichCurrRefs(data[0]);
-  setPlanItems(prev => [
-    ...prev,
-    { ...enriched, status: normalizeStatusCode(enriched.status) }
-  ]);
-  showToast({ type: 'success', title: 'Added', message: `${payload.activity}` });
-}
+    const { data, error } = await supabase
+      .from('plan_items')
+      .insert([newItem])
+      .select('*');
 
+    if (error) {
+      showToast({ type: 'error', title: 'Error', message: error.message });
+      return;
+    }
+
+    if (data?.[0]) {
+      const enriched = enrichCurrRefs(data[0]);
+      setPlanItems(prev => [...prev, { ...enriched, status: normalizeStatusCode(enriched.status) }]);
+      showToast({ type: 'success', title: 'Added', message: `${payload.activity}` });
+    }
   };
 
   const handleUpdateItem = async (updatedItem) => {
     let dateFields = {};
     if (updatedItem.planning_date) {
       const d = new Date(updatedItem.planning_date);
-      if (!isNaN(d.getTime())) dateFields = { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+      if (!isNaN(d.getTime())) {
+        dateFields = { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+      }
     }
-    const { error } = await supabase.from('plan_items').update({ status: updatedItem.status, notes: updatedItem.notes, planning_date: updatedItem.planning_date, area: updatedItem.area, ...dateFields }).eq('id', updatedItem.id);
+
+    const { error } = await supabase
+      .from('plan_items')
+      .update({
+        status: updatedItem.status,
+        notes: updatedItem.notes,
+        planning_date: updatedItem.planning_date,
+        area: updatedItem.area,
+        ...dateFields
+      })
+      .eq('id', updatedItem.id);
+
     if (error) showToast({ type: 'error', title: 'Error', message: error.message });
     else {
       setPlanItems(prev => prev.map(i => i.id === updatedItem.id ? { ...i, ...updatedItem, ...dateFields } : i));
@@ -393,7 +448,7 @@ else if (data?.[0]) {
   };
 
   const handleDeleteItem = async (itemId) => {
-    if (!confirm("Delete this activity?")) return;
+    if (!confirm('Delete this activity?')) return;
     const { error } = await supabase.from('plan_items').delete().eq('id', itemId);
     if (error) showToast({ type: 'error', title: 'Error', message: error.message });
     else {
@@ -405,7 +460,12 @@ else if (data?.[0]) {
   const handleMoveItemToDate = async (item, newISODate) => {
     const d = new Date(newISODate);
     const updated = { ...item, planning_date: newISODate, year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
-    const { error } = await supabase.from('plan_items').update({ planning_date: newISODate, year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() }).eq('id', item.id);
+
+    const { error } = await supabase
+      .from('plan_items')
+      .update({ planning_date: newISODate, year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() })
+      .eq('id', item.id);
+
     if (error) showToast({ type: 'error', title: 'Error', message: error.message });
     else {
       setPlanItems(prev => prev.map(i => i.id === item.id ? updated : i));
@@ -413,10 +473,9 @@ else if (data?.[0]) {
     }
   };
 
-if (loading) return <LoadingScreen />;      // auth still checking
-if (!user) return <LoginScreen />;          // not logged in -> show login
-if (initialLoading) return <LoadingScreen />; // logged in but data still loading
-
+  if (loading) return <LoadingScreen />;
+  if (!user) return <LoginScreen />;
+  if (initialLoading) return <LoadingScreen />;
 
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
   const displayName = getDisplayName(profile, user);
@@ -424,87 +483,161 @@ if (initialLoading) return <LoadingScreen />; // logged in but data still loadin
   const parentStudentId = (profile?.role === 'parent' && profile?.student_id) ? profile.student_id : null;
 
   return (
-<div style={{ fontFamily: THEME.sansFont, background: THEME.bg, minHeight: '100vh', color: THEME.text, width: '100%', overflowX: 'hidden' }}>
+    <div style={{ fontFamily: THEME.sansFont, background: THEME.bg, minHeight: '100vh', color: THEME.text, width: '100%', overflowX: 'hidden' }}>
       <FontLoader />
       <Toast toast={toast} onClose={() => setToast(null)} />
-<QuickAddModal
-  open={quickAddOpen}
-  onClose={() => setQuickAddOpen(false)}
-  students={students}
-  classrooms={classrooms}
-  curriculum={curriculum}
-  defaultStudentId={parentStudentId || targetStudentId || ''}
-  defaultDateISO={activeDate}
-  onQuickAdd={handleQuickAdd}     // ✅ ADD THIS
-  showToast={showToast}
-/>
+
+      <QuickAddModal
+        open={quickAddOpen}
+        onClose={() => setQuickAddOpen(false)}
+        students={students}
+        classrooms={classrooms}
+        curriculum={curriculum}
+        defaultStudentId={parentStudentId || targetStudentId || ''}
+        defaultDateISO={activeDate}
+        onQuickAdd={handleQuickAdd}
+        showToast={showToast}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: '100vh' }}>
-        <Sidebar firstName={firstName} profile={profile} viewState={viewState} onNavigate={setViewState} onSignOut={signOut} />
-        <div style={{ padding: viewState === 'HOME' ? 0 :  'clamp(16px, 3vw, 50px)',maxWidth: 1650, margin: '0 auto', width: '100%',    boxSizing: 'border-box' }}>
-       {viewState === 'HOME' && <HomeMenu userName={firstName} onNavigate={setViewState} />}
-          {viewState === 'DASHBOARD' && (
-            <DashboardView
-              planItems={planItems} students={students} classrooms={classrooms} activeDate={activeDate} setActiveDate={setActiveDate}
-              onUpdateItem={handleUpdateItem} onDeleteItem={handleDeleteItem} curriculum={curriculum} onMoveItemToDate={handleMoveItemToDate}
-              masterPlans={masterPlans} planSessions={planSessions} showToast={showToast} openQuickAdd={() => setQuickAddOpen(true)}  onQuickAdd={handleQuickAdd}
-            />
-          )}
-          {viewState === 'YEARLY' && <MasterTimelineView masterPlans={masterPlans} planSessions={planSessions} classrooms={classrooms} activeDate={activeDate} setActiveDate={setActiveDate} showToast={showToast} />}
-          {viewState === 'INDIVIDUAL' && <IndividualPlanner profile={profile} forcedStudentId={parentStudentId} students={students} planItems={planItems} curriculum={curriculum} classrooms={classrooms} masterPlans={masterPlans} planSessions={planSessions} activeDate={activeDate} setActiveDate={setActiveDate} onQuickAdd={handleQuickAdd} onUpdateItem={handleUpdateItem} onMoveItemToDate={handleMoveItemToDate} onDeleteItem={handleDeleteItem} openQuickAdd={() => setQuickAddOpen(true)} showToast={showToast} />}
-          {viewState === 'CONFIG' && <ConfigurationView isReadOnly={!isSupervisor} />}
+        <Sidebar
+          firstName={firstName}
+          profile={profile}
+          viewState={viewState}
+          onNavigate={setViewState}
+          onSignOut={signOut}
+        />
+
+        <div
+          style={{
+            padding: viewState === 'HOME' ? 0 : 'clamp(16px, 3vw, 50px)',
+            maxWidth: 1650,
+            margin: '0 auto',
+            width: '100%',
+            boxSizing: 'border-box'
+          }}
+        >
+          <ErrorBoundary>
+            {viewState === 'HOME' && <HomeMenu userName={firstName} onNavigate={setViewState} />}
+
+            {viewState === 'DASHBOARD' && (
+              <DashboardView
+                planItems={planItems}
+                students={students}
+                classrooms={classrooms}
+                activeDate={activeDate}
+                setActiveDate={setActiveDate}
+                onUpdateItem={handleUpdateItem}
+                onDeleteItem={handleDeleteItem}
+                onMoveItemToDate={handleMoveItemToDate}
+                curriculum={curriculum}
+                curriculumAreas={curriculumAreas}
+                curriculumCategories={curriculumCategories}
+                masterPlans={masterPlans}
+                planSessions={planSessions}
+                showToast={showToast}
+                openQuickAdd={() => setQuickAddOpen(true)}
+                onQuickAdd={handleQuickAdd}
+              />
+            )}
+
+            {viewState === 'YEARLY' && (
+              <MasterTimelineView
+                masterPlans={masterPlans}
+                planSessions={planSessions}
+                classrooms={classrooms}
+                activeDate={activeDate}
+                setActiveDate={setActiveDate}
+                showToast={showToast}
+              />
+            )}
+
+            {viewState === 'INDIVIDUAL' && (
+              <IndividualPlanner
+                profile={profile}
+                forcedStudentId={parentStudentId}
+                students={students}
+                planItems={planItems}
+                curriculum={curriculum}
+                curriculumAreas={curriculumAreas}
+                curriculumCategories={curriculumCategories}
+                classrooms={classrooms}
+                masterPlans={masterPlans}
+                planSessions={planSessions}
+                activeDate={activeDate}
+                setActiveDate={setActiveDate}
+                onQuickAdd={handleQuickAdd}
+                onUpdateItem={handleUpdateItem}
+                onMoveItemToDate={handleMoveItemToDate}
+                onDeleteItem={handleDeleteItem}
+                openQuickAdd={() => setQuickAddOpen(true)}
+                showToast={showToast}
+              />
+            )}
+
+            {viewState === 'CONFIG' && <ConfigurationView isReadOnly={!isSupervisor} />}
+          </ErrorBoundary>
         </div>
       </div>
     </div>
   );
 }
 
-// --- SIDEBAR ---
+// ------------------------
+// SIDEBAR (lighter weights)
+// ------------------------
 function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
-  const roleLabel = (profile?.role || 'teacher').replace('_', ' ');
-
   return (
     <div style={{ position: 'sticky', top: 0, height: '100vh', background: '#FFFFFF', borderRight: '1px solid #eee', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '28px 24px', borderBottom: '1px solid #eee' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ fontFamily: THEME.serifFont, fontWeight: 700, fontSize: 22, color: THEME.text }}>
-            Montessori<br/><span style={{ color: THEME.brandSecondary }}>OS</span>
+      <div style={{ padding: '26px 22px', borderBottom: '1px solid #eee' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ fontFamily: THEME.serifFont, fontWeight: 600, fontSize: 20, color: THEME.text, lineHeight: 1.05 }}>
+            Montessori<br /><span style={{ color: THEME.brandSecondary }}>OS</span>
           </div>
-          <div style={{ width: 44, height: 44, background: THEME.brandAccent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 20, color: THEME.text, border: '2px solid white' }}>
+          <div style={{ width: 44, height: 44, background: THEME.brandAccent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 18, color: THEME.text, border: '2px solid white', borderRadius: 14 }}>
             {(firstName || 'T').slice(0, 1).toUpperCase()}
           </div>
         </div>
+
         <div>
-          <div style={{ fontWeight: 600, fontSize: 16, color: THEME.text }}>{firstName}</div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: THEME.textMuted, marginTop: 4 }}></div>
+          <div style={{ fontWeight: 500, fontSize: 15, color: THEME.text }}>{firstName}</div>
         </div>
       </div>
 
       <div style={{ padding: '10px 0', flex: 1 }}>
         <NavItem label="Home" active={viewState === 'HOME'} onClick={() => onNavigate('HOME')} />
         <NavItem label="Dashboard" active={viewState === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} />
-        <NavItem label="Scope & Sequence" active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')}/>
-        <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')}/>
+        <NavItem label="Scope & Sequence" active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')} />
+        <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} />
         <NavItem label="Configuration" active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} />
       </div>
 
-      <div style={{ padding: 24 }}>
-        <Button variant="ghost" onClick={onSignOut} style={{ width: '100%', border: '1px solid #eee', fontWeight: 600 }}>Sign Out</Button>
+      <div style={{ padding: 22 }}>
+        <Button variant="ghost" onClick={onSignOut} style={{ width: '100%', border: '1px solid #eee', fontWeight: 500 }}>
+          Sign Out
+        </Button>
       </div>
     </div>
   );
 }
 
-// --- HOME MENU ---
+// ------------------------
+// HOME MENU (unchanged)
+// ------------------------
 function HomeMenu({ userName, onNavigate }) {
   return (
     <div style={{ minHeight: '92vh', padding: '60px 20px', background: THEME.bg, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={{ maxWidth: 1000, width: '100%' }}>
         <div style={{ textAlign: 'center', marginBottom: 60 }}>
           <div style={{ width: 80, height: 80, background: THEME.brandYellow, margin: '0 auto 20px', clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }} />
-          <h1 style={{ fontFamily: THEME.serifFont, fontSize: '3rem', color: THEME.text, marginBottom: 16 }}>Hello, <span style={{ color: THEME.brandSecondary }}>{userName}</span></h1>
-          <p style={{ color: THEME.textMuted, fontSize: '1.2rem', fontWeight: 500, margin: 0, maxWidth: 600, marginInline: 'auto' }}>Welcome to the Montessori digital planner.</p>
+          <h1 style={{ fontFamily: THEME.serifFont, fontSize: '3rem', color: THEME.text, marginBottom: 16 }}>
+            Hello, <span style={{ color: THEME.brandSecondary }}>{userName}</span>
+          </h1>
+          <p style={{ color: THEME.textMuted, fontSize: '1.2rem', fontWeight: 500, margin: 0, maxWidth: 600, marginInline: 'auto' }}>
+            Welcome to the Montessori digital planner.
+          </p>
         </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 30 }}>
           <HomeCard icon="🎓" title="Individual Plans" desc="Student tracking, reports and progress boards." onClick={() => onNavigate('INDIVIDUAL')} color={THEME.brandAccent} />
           <HomeCard icon="📊" title="Dashboard" desc="Monthly overview + weekly planning." onClick={() => onNavigate('DASHBOARD')} color={THEME.brandSecondary} />
@@ -529,6 +662,3 @@ function HomeCard({ icon, title, desc, onClick, color }) {
     </Card>
   );
 }
-
-
-

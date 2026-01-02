@@ -1,553 +1,468 @@
 import { useEffect, useMemo, useState } from 'react';
-import { THEME, getStatusStyle, getSubjectStyle } from '../../ui/theme';
-import { getNormalizedItem, formatStudentName, safeDate } from '../../utils/helpers';
+import { THEME } from '../../ui/theme';
 import Card from '../ui/Card';
+import Button from '../ui/Button';
 
-/**
- * KanbanColumn
- * Supports:
- *  - DASHBOARD: Class → Area → Category → Activity → Sub-activity → Students
- *  - SINGLE_STUDENT: Area → Category → Sub-activity (teacher bullet) only
- */
-export default function KanbanColumn({
-  status,
-  items,
-  students,
-  classrooms,
-  selectedClassroomId = null,
-  expandAction,
-  onEditItem,
-  onDeleteItem,
-  mode = 'DASHBOARD',
-  columnLabelOverride
+const STATUS_OPTIONS = [
+  { value: 'P', label: 'To Present' },
+  { value: 'W', label: 'Practicing' },
+  { value: 'M', label: 'Mastered' }
+];
+
+function clean(s) {
+  return String(s || '').trim();
+}
+
+export default function QuickAddModal({
+  open,
+  onClose,
+  onSubmit,
+  classrooms = [],
+  students = [],
+  curriculum = [],
+  curriculumAreas = [],
+  curriculumCategories = [],
+  defaults = {},
+  showToast
 }) {
-  const statusMeta = getStatusStyle?.(status) || {};
-  const statusLabel =
-    status === 'W'
-      ? 'Practicing'
-      : status === 'P'
-      ? 'To Present'
-      : status === 'A'
-      ? 'Next Month Aim'
-      : status === 'M'
-      ? 'Mastered'
-      : String(status);
+  const [classroomId, setClassroomId] = useState(defaults.classroom_id ?? classrooms?.[0]?.id ?? '');
+  const [status, setStatus] = useState(defaults.status ?? 'P');
+  const [date, setDate] = useState(defaults.date ?? '');
+  const [area, setArea] = useState(defaults.area ?? '');
+  const [category, setCategory] = useState(defaults.category ?? '');
+  const [activity, setActivity] = useState(defaults.activity ?? '');
+  const [teacherNote, setTeacherNote] = useState(defaults.teacher_note ?? '');
 
-  const headerLabel = columnLabelOverride || statusLabel;
-
-  const studentById = useMemo(() => {
-    const m = new Map();
-    (students || []).forEach((s) => m.set(String(s.id), s));
-    return m;
-  }, [students]);
-
-  const classById = useMemo(() => {
-    const m = new Map();
-    (classrooms || []).forEach((c, idx) => {
-      const color =
-        THEME?.classroomColors?.[idx % (THEME?.classroomColors?.length || 1)] || THEME.brandAccent;
-      m.set(String(c.id), { ...c, __color: color });
-    });
-    return m;
-  }, [classrooms]);
-
-  const normKey = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
-
-  // --- Expand/collapse state ---
-  // IMPORTANT FIX:
-  // Global expand/collapse sets a default, but per-key toggles MUST still override it.
-  const [openMap, setOpenMap] = useState({}); // key -> boolean, plus __ALL__ default
+  const [studentSearch, setStudentSearch] = useState('');
+  const [selected, setSelected] = useState(() => new Set());
 
   useEffect(() => {
-    if (!expandAction?.type) return;
-    setOpenMap((prev) => ({ ...prev, __ALL__: expandAction.type === 'EXPAND' }));
-  }, [expandAction?.ts]); // intentional
+    if (!open) return;
+    setClassroomId(defaults.classroom_id ?? classrooms?.[0]?.id ?? '');
+    setStatus(defaults.status ?? 'P');
+    setDate(defaults.date ?? '');
+    setArea(defaults.area ?? '');
+    setCategory(defaults.category ?? '');
+    setActivity(defaults.activity ?? '');
+    setTeacherNote(defaults.teacher_note ?? '');
+    setStudentSearch('');
+    setSelected(new Set());
+  }, [open, defaults, classrooms]);
 
-  const isOpen = (key, defaultOpen = false) => {
-    // per-key always wins (fix regression)
-    if (openMap[key] !== undefined) return !!openMap[key];
-    if (openMap.__ALL__ !== undefined) return !!openMap.__ALL__;
-    return defaultOpen;
-  };
+  // --- options ---
+  const areaOptions = useMemo(() => {
+    const map = new Map();
 
-  const toggle = (key) => {
-    setOpenMap((p) => ({ ...p, [key]: !isOpen(key) }));
-  };
+    // prefer explicit curriculumAreas
+    for (const a of curriculumAreas || []) {
+      if (a?.name) map.set(a.name, a.name);
+    }
 
-  // ---- Build trees
-  const dashboardTree = useMemo(() => {
-    if (mode === 'SINGLE_STUDENT') return null;
+    // fallback: derive from curriculum activities
+    for (const c of curriculum || []) {
+      const n = c?.curriculum_areas?.name || c?.area || '';
+      if (n) map.set(n, n);
+    }
 
-    const root = new Map(); // classKey -> node
-    const useClassGrouping =
-      !selectedClassroomId &&
-      new Set((items || []).map((x) => String(x.classroom_id))).size > 1;
+    map.set('General', 'General');
 
-    const getClassNode = (classId) => {
-      const k = useClassGrouping ? String(classId || 'NOCLASS') : '__SINGLE_CLASS__';
-      if (!root.has(k)) {
-        const cls = classById.get(String(classId || '')) || { name: 'Unassigned', __color: '#eee' };
-        root.set(k, {
-          key: k,
-          label: useClassGrouping ? cls.name : null,
-          color: cls.__color,
-          areas: new Map(),
-          count: 0
-        });
+    return Array.from(map.values()).sort((x, y) => x.localeCompare(y));
+  }, [curriculumAreas, curriculum]);
+
+  const categoryOptions = useMemo(() => {
+    if (!area) return [];
+
+    // derive categories used by activities under chosen area (most robust)
+    const catIds = new Set();
+    for (const c of curriculum || []) {
+      const aName = c?.curriculum_areas?.name || c?.area || '';
+      if (clean(aName).toLowerCase() !== clean(area).toLowerCase()) continue;
+      const cid = c?.category_id || c?.curriculum_category_id || c?.curriculum_category?.id || c?.curriculum_categories?.id;
+      if (cid != null) catIds.add(String(cid));
+    }
+
+    const idToName = new Map();
+    for (const cat of curriculumCategories || []) {
+      if (cat?.id == null) continue;
+      idToName.set(String(cat.id), cat.name || '');
+    }
+
+    const names = [];
+    for (const id of catIds) {
+      const nm = idToName.get(id);
+      if (nm) names.push(nm);
+    }
+
+    // fallback: if we couldn't resolve categories, show all categories
+    const fallback = (curriculumCategories || []).map(c => c?.name).filter(Boolean);
+
+    const out = (names.length ? names : fallback).filter(Boolean);
+    return Array.from(new Set(out)).sort((x, y) => x.localeCompare(y));
+  }, [area, curriculum, curriculumCategories]);
+
+  const activityOptions = useMemo(() => {
+    const a = clean(area).toLowerCase();
+    const cat = clean(category).toLowerCase();
+
+    const list = (curriculum || []).filter(c => {
+      const aName = clean(c?.curriculum_areas?.name || c?.area).toLowerCase();
+      if (a && aName !== a) return false;
+
+      if (cat) {
+        const catName = clean(c?.curriculum_categories?.name || c?.category).toLowerCase();
+        if (catName !== cat) return false;
       }
-      return root.get(k);
-    };
-
-    const ensure = (map, key, init) => {
-      if (!map.has(key)) map.set(key, init());
-      return map.get(key);
-    };
-
-    (items || []).forEach((it) => {
-      const norm = getNormalizedItem(it);
-      const areaLabel = (norm.area || 'General').trim() || 'General';
-      const areaKey = normKey(areaLabel);
-
-      const catLabel =
-        (it.curriculum_categories?.name || '').trim() ||
-        (it.category || '').trim() ||
-        'Uncategorized';
-      const catKey = normKey(catLabel);
-
-      const activityLabel = (norm.title || it.activity || 'Activity').trim() || 'Activity';
-      const actKey = normKey(activityLabel);
-
-      const subLabel = (norm.rawActivity || it.raw_activity || '').trim() || '—';
-      const subKey = normKey(subLabel);
-
-      const classNode = getClassNode(it.classroom_id);
-      classNode.count += 1;
-
-      const areaNode = ensure(classNode.areas, areaKey, () => ({
-        key: areaKey,
-        label: areaLabel,
-        categories: new Map(),
-        count: 0
-      }));
-      areaNode.count += 1;
-
-      const catNode = ensure(areaNode.categories, catKey, () => ({
-        key: catKey,
-        label: catLabel,
-        activities: new Map(),
-        count: 0
-      }));
-      catNode.count += 1;
-
-      const actNode = ensure(catNode.activities, actKey, () => ({
-        key: actKey,
-        label: activityLabel,
-        subs: new Map(),
-        count: 0
-      }));
-      actNode.count += 1;
-
-      const subNode = ensure(actNode.subs, subKey, () => ({
-        key: subKey,
-        label: subLabel,
-        students: new Map(), // studentId -> { student, items: [] }
-        count: 0
-      }));
-      subNode.count += 1;
-
-      const sid = String(it.student_id || '');
-      const stu = studentById.get(sid);
-      const stuLabel = stu ? formatStudentName(stu) : 'Unknown';
-
-      if (!subNode.students.has(sid)) subNode.students.set(sid, { id: sid, label: stuLabel, items: [] });
-      subNode.students.get(sid).items.push(it);
+      return true;
     });
 
-    const toSorted = (map, sorter) => Array.from(map.values()).sort(sorter);
+    // unique names
+    const set = new Map();
+    for (const c of list) {
+      if (!c?.name) continue;
+      set.set(c.name, c);
+    }
 
-    const classNodes = toSorted(root, (a, b) => (a.label || '').localeCompare(b.label || ''));
-    classNodes.forEach((c) => {
-      c.areasArr = toSorted(c.areas, (a, b) => a.label.localeCompare(b.label));
-      c.areasArr.forEach((a) => {
-        a.categoriesArr = toSorted(a.categories, (x, y) => x.label.localeCompare(y.label));
-        a.categoriesArr.forEach((cat) => {
-          cat.activitiesArr = toSorted(cat.activities, (x, y) => x.label.localeCompare(y.label));
-          cat.activitiesArr.forEach((act) => {
-            act.subsArr = toSorted(act.subs, (x, y) => x.label.localeCompare(y.label));
-            act.subsArr.forEach((sub) => {
-              sub.studentsArr = Array.from(sub.students.values()).sort((x, y) => x.label.localeCompare(y.label));
-            });
-          });
-        });
-      });
+    return Array.from(set.keys()).sort((x, y) => x.localeCompare(y));
+  }, [curriculum, area, category]);
+
+  const filteredStudents = useMemo(() => {
+    const q = clean(studentSearch).toLowerCase();
+    if (!q) return students || [];
+    return (students || []).filter(s => {
+      const nm = `${s.first_name || ''} ${s.last_name || ''}`.trim().toLowerCase();
+      return nm.includes(q);
     });
+  }, [students, studentSearch]);
 
-    return { useClassGrouping, classNodes };
-  }, [items, mode, selectedClassroomId, classById, studentById]);
-
-  const studentTree = useMemo(() => {
-    if (mode !== 'SINGLE_STUDENT') return null;
-
-    const root = new Map(); // areaKey -> area
-    const ensure = (map, key, init) => {
-      if (!map.has(key)) map.set(key, init());
-      return map.get(key);
-    };
-
-    (items || []).forEach((it) => {
-      const norm = getNormalizedItem(it);
-      const areaLabel = (norm.area || 'General').trim() || 'General';
-      const areaKey = normKey(areaLabel);
-
-      const catLabel =
-        (it.curriculum_categories?.name || '').trim() ||
-        (it.category || '').trim() ||
-        'Uncategorized';
-      const catKey = normKey(catLabel);
-
-      const subLabel = (norm.rawActivity || it.raw_activity || '').trim() || (norm.title || it.activity || '—');
-      const subKey = normKey(subLabel);
-
-      const areaNode = ensure(root, areaKey, () => ({
-        key: areaKey,
-        label: areaLabel,
-        categories: new Map(),
-        count: 0
-      }));
-      areaNode.count += 1;
-
-      const catNode = ensure(areaNode.categories, catKey, () => ({
-        key: catKey,
-        label: catLabel,
-        subs: new Map(),
-        count: 0
-      }));
-      catNode.count += 1;
-
-      const subNode = ensure(catNode.subs, subKey, () => ({
-        key: subKey,
-        label: subLabel,
-        items: [],
-        count: 0
-      }));
-      subNode.count += 1;
-      subNode.items.push(it);
+  const toggleStudent = (id) => {
+    setSelected(prev => {
+      const n = new Set(prev);
+      const k = String(id);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
     });
+  };
 
-    const toSorted = (map, sorter) => Array.from(map.values()).sort(sorter);
+  const selectAll = () => setSelected(new Set((filteredStudents || []).map(s => String(s.id))));
+  const clearAll = () => setSelected(new Set());
 
-    const areasArr = toSorted(root, (a, b) => a.label.localeCompare(b.label));
-    areasArr.forEach((a) => {
-      a.categoriesArr = toSorted(a.categories, (x, y) => x.label.localeCompare(y.label));
-      a.categoriesArr.forEach((cat) => {
-        cat.subsArr = toSorted(cat.subs, (x, y) => x.label.localeCompare(y.label));
-      });
+  if (!open) return null;
+
+  const doSubmit = async () => {
+    if (!classroomId) return showToast?.('Please choose a classroom', 'error');
+    if (!clean(activity)) return showToast?.('Please choose or type an activity', 'error');
+    if (selected.size === 0) return showToast?.('Please select at least one student', 'error');
+
+    await onSubmit?.({
+      classroom_id: classroomId,
+      status,
+      planning_date: date || null,
+      area: area || 'General',
+      category: category || null,
+      activity: clean(activity),
+      teacher_note: clean(teacherNote) || null,
+      student_ids: Array.from(selected)
     });
+  };
 
-    return { areasArr };
-  }, [items, mode]);
-
-  return (
-    <Card style={{ padding: 0, overflow: 'hidden', borderTop: `4px solid ${statusMeta?.accent || THEME.brandSecondary}` }}>
-      <div style={{ padding: 14, borderBottom: '1px solid #eee', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <div style={{ fontWeight: 900, fontSize: 14, color: THEME.text }}>{headerLabel}</div>
-        <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted }}>{(items || []).length}</div>
-      </div>
-
-      <div style={{ padding: 12 }}>
-        {(items || []).length === 0 && (
-          <div style={{ padding: 12, border: '1px dashed #ddd', background: '#fafafa', color: '#999', fontWeight: 700, fontSize: 13 }}>
-            No items.
-          </div>
-        )}
-
-        {mode !== 'SINGLE_STUDENT' && dashboardTree?.classNodes?.map((cls) => {
-          const clsKey = `cls:${status}:${cls.key}`;
-          const openCls = !dashboardTree.useClassGrouping ? true : isOpen(clsKey, false);
-
-          return (
-            <div key={cls.key} style={{ marginBottom: 10 }}>
-              {dashboardTree.useClassGrouping && (
-                <GroupHeader
-                  label={cls.label}
-                  count={cls.count}
-                  color={cls.color}
-                  open={openCls}
-                  onToggle={() => toggle(clsKey)}
-                />
-              )}
-
-              {openCls && (
-                <div style={{ paddingLeft: dashboardTree.useClassGrouping ? 10 : 0, display: 'grid', gap: 8, marginTop: 8 }}>
-                  {cls.areasArr.map((area) => {
-                    const subj = getSubjectStyle(area.label);
-                    const areaKey = `area:${status}:${cls.key}:${area.key}`;
-                    const openArea = isOpen(areaKey, false);
-
-                    return (
-                      <div key={area.key} style={{ border: `1px solid ${subj.border}`, background: '#fff' }}>
-                        <div
-                          onClick={() => toggle(areaKey)}
-                          style={{
-                            cursor: 'pointer',
-                            padding: '10px 12px',
-                            background: subj.bg,
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <div style={{ fontWeight: 900, color: subj.text, fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-                            {area.label}
-                          </div>
-                          <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-                            {area.count} {openArea ? '−' : '+'}
-                          </div>
-                        </div>
-
-                        {openArea && (
-                          <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-                            {area.categoriesArr.map((cat) => {
-                              const catKey = `cat:${status}:${cls.key}:${area.key}:${cat.key}`;
-                              const openCat = isOpen(catKey, false);
-
-                              return (
-                                <div key={cat.key} style={{ border: '1px solid #eee', background: '#fff' }}>
-                                  <div
-                                    onClick={() => toggle(catKey)}
-                                    style={{
-                                      cursor: 'pointer',
-                                      padding: '10px 12px',
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center'
-                                    }}
-                                  >
-                                    <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>{cat.label}</div>
-                                    <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-                                      {cat.count} {openCat ? '−' : '+'}
-                                    </div>
-                                  </div>
-
-                                  {openCat && (
-                                    <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-                                      {cat.activitiesArr.map((act) => {
-                                        const actKey = `act:${status}:${cls.key}:${area.key}:${cat.key}:${act.key}`;
-                                        const openAct = isOpen(actKey, false);
-
-                                        return (
-                                          <div key={act.key} style={{ border: '1px solid #f0f0f0', background: '#fff' }}>
-                                            <div
-                                              onClick={() => toggle(actKey)}
-                                              style={{
-                                                cursor: 'pointer',
-                                                padding: '10px 12px',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center'
-                                              }}
-                                            >
-                                              <div style={{ fontWeight: 800, fontSize: 12, color: THEME.text }}>
-                                                {act.label}
-                                              </div>
-                                              <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-                                                {act.count} {openAct ? '−' : '+'}
-                                              </div>
-                                            </div>
-
-                                            {openAct && (
-                                              <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-                                                {act.subsArr.map((sub) => (
-                                                  <div key={sub.key} style={{ border: '1px solid #eee', background: '#fafafa', padding: 10 }}>
-                                                    <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>
-                                                      {sub.label}
-                                                    </div>
-
-                                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                                      {sub.studentsArr.map((s) => {
-                                                        const it = s.items?.[0];
-                                                        const dup = (s.items || []).length;
-                                                        return (
-                                                          <StudentChip
-                                                            key={s.id}
-                                                            label={s.label}
-                                                            count={dup}
-                                                            onClick={() => it && onEditItem?.(it)}
-                                                            onDelete={() => it && onDeleteItem?.(it.id)}
-                                                          />
-                                                        );
-                                                      })}
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {mode === 'SINGLE_STUDENT' && studentTree?.areasArr?.map((area) => {
-          const subj = getSubjectStyle(area.label);
-          const areaKey = `stuArea:${status}:${area.key}`;
-          const openArea = isOpen(areaKey, false);
-
-          return (
-            <div key={area.key} style={{ border: `1px solid ${subj.border}`, background: '#fff', marginBottom: 10 }}>
-              <div
-                onClick={() => toggle(areaKey)}
-                style={{
-                  cursor: 'pointer',
-                  padding: '10px 12px',
-                  background: subj.bg,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}
-              >
-                <div style={{ fontWeight: 900, color: subj.text, fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-                  {area.label}
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-                  {area.count} {openArea ? '−' : '+'}
-                </div>
-              </div>
-
-              {openArea && (
-                <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-                  {area.categoriesArr.map((cat) => {
-                    const catKey = `stuCat:${status}:${area.key}:${cat.key}`;
-                    const openCat = isOpen(catKey, false);
-
-                    return (
-                      <div key={cat.key} style={{ border: '1px solid #eee', background: '#fff' }}>
-                        <div
-                          onClick={() => toggle(catKey)}
-                          style={{ cursor: 'pointer', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                        >
-                          <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>{cat.label}</div>
-                          <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-                            {cat.count} {openCat ? '−' : '+'}
-                          </div>
-                        </div>
-
-                        {openCat && (
-                          <div style={{ padding: 10, display: 'grid', gap: 8 }}>
-                            {cat.subsArr.map((sub) => {
-                              const firstItem = sub.items?.[0];
-                              return (
-                                <div
-                                  key={sub.key}
-                                  onClick={() => firstItem && onEditItem?.(firstItem)}
-                                  style={{
-                                    cursor: 'pointer',
-                                    padding: 10,
-                                    border: '1px solid #eee',
-                                    background: '#fafafa'
-                                  }}
-                                  title={(getNormalizedItem(firstItem)?.title || firstItem?.activity || '').toString()}
-                                >
-                                  <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>
-                                    {sub.label}
-                                  </div>
-                                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: THEME.textMuted }}>
-                                    {sub.items?.length || 0} item(s)
-                                    {firstItem?.planning_date ? ` • ${safeDate(firstItem.planning_date)}` : ''}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-function GroupHeader({ label, count, color, open, onToggle }) {
   return (
     <div
-      onClick={onToggle}
+      onMouseDown={onClose}
       style={{
-        cursor: 'pointer',
-        padding: '10px 12px',
-        border: '1px solid #eee',
-        background: '#fff',
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.25)',
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        borderLeft: `6px solid ${color || '#eee'}`
+        justifyContent: 'center',
+        padding: 16,
+        zIndex: 9999
       }}
     >
-      <div style={{ fontWeight: 900, color: THEME.text, fontSize: 12 }}>{label}</div>
-      <div style={{ fontWeight: 900, color: THEME.textMuted, fontSize: 12 }}>{count} {open ? '−' : '+'}</div>
-    </div>
-  );
-}
+      <Card
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          width: 'min(860px, 96vw)',
+          padding: 16,
+          border: '1px solid rgba(10,53,92,0.10)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: THEME.brandPrimary, fontFamily: THEME.serifFont }}>
+              Add activity
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+              Pick area/category/activity, select students, optional date — done.
+            </div>
+          </div>
 
-function StudentChip({ label, count = 1, onClick, onDelete }) {
-  return (
-    <div
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 8,
-        border: '1px solid #eaeaea',
-        background: '#fff',
-        padding: '6px 10px',
-        cursor: 'pointer',
-        fontWeight: 900,
-        fontSize: 12
-      }}
-      onClick={onClick}
-      title={count > 1 ? `${count} entries` : 'Open'}
-    >
-      <span>{label}</span>
-      {count > 1 && (
-        <span style={{ fontSize: 11, fontWeight: 900, color: THEME.textMuted }}>
-          ×{count}
-        </span>
-      )}
-      {onDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          style={{
-            border: 'none',
-            background: 'transparent',
-            cursor: 'pointer',
-            fontWeight: 900,
-            color: '#C0392B'
-          }}
-          title="Delete"
-        >
-          ×
-        </button>
-      )}
+          <button
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              fontSize: 22,
+              cursor: 'pointer',
+              color: THEME.textMuted,
+              lineHeight: '20px'
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Classroom</div>
+            <select
+              value={classroomId}
+              onChange={(e) => setClassroomId(e.target.value)}
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 10px',
+                fontSize: 13,
+                fontWeight: 600,
+                background: '#fff'
+              }}
+            >
+              {classrooms.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Status</div>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 10px',
+                fontSize: 13,
+                fontWeight: 600,
+                background: '#fff'
+              }}
+            >
+              {STATUS_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
+              Date (optional)
+            </div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 10px',
+                fontSize: 13,
+                fontWeight: 600,
+                background: '#fff'
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Area</div>
+            <select
+              value={area}
+              onChange={(e) => {
+                setArea(e.target.value);
+                setCategory('');
+              }}
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 10px',
+                fontSize: 13,
+                fontWeight: 600,
+                background: '#fff'
+              }}
+            >
+              <option value="">Select…</option>
+              {areaOptions.map(a => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
+              Category (optional)
+            </div>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 10px',
+                fontSize: 13,
+                fontWeight: 600,
+                background: '#fff'
+              }}
+            >
+              <option value="">—</option>
+              {categoryOptions.map(c => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
+              Activity (pick or type)
+            </div>
+
+            <input
+              list="activity-suggestions"
+              value={activity}
+              onChange={(e) => setActivity(e.target.value)}
+              placeholder="Start typing…"
+              style={{
+                width: '100%',
+                height: 38,
+                borderRadius: 12,
+                border: '1px solid rgba(10,53,92,0.14)',
+                padding: '0 12px',
+                fontSize: 13,
+                fontWeight: 500,
+                background: '#fff'
+              }}
+            />
+            <datalist id="activity-suggestions">
+              {activityOptions.slice(0, 200).map(a => (
+                <option key={a} value={a} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
+            Teacher note / sub-activity (optional)
+          </div>
+          <textarea
+            value={teacherNote}
+            onChange={(e) => setTeacherNote(e.target.value)}
+            placeholder="Example: • c,a,n,r,m,t memory game"
+            style={{
+              width: '100%',
+              minHeight: 70,
+              borderRadius: 14,
+              border: '1px solid rgba(10,53,92,0.14)',
+              padding: 12,
+              fontSize: 13,
+              fontWeight: 500,
+              background: '#fff',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 14, border: '1px solid rgba(10,53,92,0.10)', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: THEME.brandPrimary }}>
+              Students ({selected.size} selected)
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="ghost" onClick={selectAll}>Select all</Button>
+              <Button variant="ghost" onClick={clearAll}>Clear</Button>
+            </div>
+          </div>
+
+          <input
+            value={studentSearch}
+            onChange={(e) => setStudentSearch(e.target.value)}
+            placeholder="Search student…"
+            style={{
+              marginTop: 10,
+              width: '100%',
+              height: 36,
+              borderRadius: 12,
+              border: '1px solid rgba(10,53,92,0.14)',
+              padding: '0 12px',
+              fontSize: 13,
+              fontWeight: 500,
+              background: '#fff'
+            }}
+          />
+
+          <div style={{ marginTop: 10, maxHeight: 220, overflow: 'auto', borderRadius: 12, border: '1px solid rgba(10,53,92,0.10)' }}>
+            {filteredStudents.map(s => {
+              const id = String(s.id);
+              const checked = selected.has(id);
+              const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
+
+              return (
+                <label
+                  key={id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '10px 12px',
+                    borderBottom: '1px solid rgba(10,53,92,0.06)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <input type="checkbox" checked={checked} onChange={() => toggleStudent(id)} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: THEME.brandPrimary }}>{name}</span>
+                </label>
+              );
+            })}
+            {filteredStudents.length === 0 ? (
+              <div style={{ padding: 12, fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+                No students match your search.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+            Keep it simple: pick the activity, add students, optional date.
+          </div>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button onClick={doSubmit}>Add</Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

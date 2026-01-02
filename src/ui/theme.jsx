@@ -7,8 +7,24 @@ export const FontLoader = () => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
 
-    html, body, #root { height: 100%; width: 100%; background: #F9F3EF; }
-    body { margin: 0; padding: 0; overflow-x: hidden; }
+    html, body, #root {
+      height: 100%;
+      width: 100%;
+      background: #F9F3EF;
+      overflow-x: visible; /* important */
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      overflow-x: auto !important;  /* force scroll */
+      overflow-y: auto;
+    }
+
+    #root {
+      overflow: visible !important; /* prevents root clipping */
+      max-width: 100%;
+    }
 
     *, *::before, *::after { box-sizing: border-box; }
 
@@ -18,6 +34,7 @@ export const FontLoader = () => (
     ::-webkit-scrollbar-thumb:hover { background: #163A5F; }
   `}</style>
 );
+
 
 // --- THEME ---
 export const THEME = {

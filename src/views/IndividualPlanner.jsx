@@ -7,16 +7,19 @@ import {
   addDays,
   getWeekFromDate,
   safeDate,
-  inputStyle
+  inputStyle,
+  normalizeStatusCode
 } from '../utils/helpers';
+
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import Modal from '../components/ui/Modal';
 import KanbanColumn from '../components/business/Kanban';
 import EditActivityModal from '../components/business/EditActivityModal';
 
 /** ---------------------------
- *  DATE HELPERS (robust)
- *  --------------------------- */
+ * HELPERS
+ * --------------------------- */
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
@@ -60,20 +63,242 @@ function monthLabel(dateObj) {
     return `${dateObj.getFullYear()}-${pad2(dateObj.getMonth() + 1)}`;
   }
 }
+function normStatus(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return 'P';
+  const u = s.toUpperCase();
+  if (u === 'P' || u === 'W' || u === 'M' || u === 'A') return u;
 
-/** ---------------------------
- *  AREA BUCKET (consistent)
- *  --------------------------- */
-function bucketArea(rawArea) {
-  const a = String(rawArea || '').toLowerCase();
-  if (a.includes('math')) return 'Math';
-  if (a.includes('english') || a.includes('language')) return 'English';
-  if (a.includes('sensor')) return 'Sensorial';
-  if (a.includes('culture') || a.includes('geo') || a.includes('science')) return 'Culture';
-  if (a.includes('practical')) return 'Practical Life';
-  return (rawArea || '').trim() ? rawArea : 'General';
+  const n = s.toLowerCase().replace(/[_-]/g, ' ').trim();
+  if (n.includes('practic')) return 'W';
+  if (n.includes('present')) return 'P';
+  if (n.includes('master')) return 'M';
+  if (n.includes('aim') || n.includes('next month')) return 'A';
+  return 'P';
 }
 
+/** ---------------------------
+ * ADD ACTIVITY MODAL
+ * --------------------------- */
+function AddActivityModal({
+  open,
+  onClose,
+  statusDefault = 'P',
+  classroom,
+  classroomStudents,
+  currMeta,
+  activeDateISO,
+  onQuickAdd,
+  showToast,
+  defaultDate = '',
+  preSelectedStudentId = null
+}) {
+  const [status, setStatus] = useState(statusDefault);
+  const [date, setDate] = useState(defaultDate);
+  const [areaId, setAreaId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [activityId, setActivityId] = useState('');
+  const [activityText, setActivityText] = useState('');
+  const [subNote, setSubNote] = useState('');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setStatus(statusDefault);
+    setDate(defaultDate);
+    setAreaId('');
+    setCategoryId('');
+    setActivityId('');
+    setActivityText('');
+    setSubNote('');
+    setStudentSearch('');
+    setSelectedStudentIds(preSelectedStudentId ? [preSelectedStudentId] : []);
+  }, [open, statusDefault, defaultDate, preSelectedStudentId]);
+
+  const areaOptions = useMemo(() => {
+    const a = (currMeta?.areas || []).slice();
+    return [{ value: '', label: 'Select…' }, ...a.map((x) => ({ value: String(x.id), label: x.name }))];
+  }, [currMeta]);
+
+  const categoryOptions = useMemo(() => {
+    const all = (currMeta?.categories || []).slice();
+    const filtered = areaId ? all.filter((c) => String(c.area_id) === String(areaId)) : all;
+    return [{ value: '', label: '—' }, ...filtered.map((c) => ({ value: String(c.id), label: c.name }))];
+  }, [currMeta, areaId]);
+
+  const activityOptions = useMemo(() => {
+    const all = (currMeta?.activities || []).slice();
+    let filtered = all;
+    if (categoryId) filtered = filtered.filter((a) => String(a.category_id) === String(categoryId));
+    return [{ value: '', label: 'Type to search…' }, ...filtered.map((a) => ({ value: String(a.id), label: a.name }))];
+  }, [currMeta, categoryId]);
+
+  const filteredStudents = useMemo(() => {
+    const q = (studentSearch || '').toLowerCase().trim();
+    if (!q) return classroomStudents;
+    return (classroomStudents || []).filter((s) =>
+      `${s.first_name || ''} ${s.last_name || ''}`.toLowerCase().includes(q)
+    );
+  }, [classroomStudents, studentSearch]);
+
+  const toggleStudent = (id) =>
+    setSelectedStudentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const selectAllFiltered = () =>
+    setSelectedStudentIds((prev) => Array.from(new Set([...prev, ...filteredStudents.map((s) => s.id)])));
+  const clearAll = () => setSelectedStudentIds([]);
+
+  const save = async () => {
+    if (!classroom?.id) return showToast?.({ type: 'error', title: 'Missing classroom', message: 'Select a classroom first.' });
+    if (!selectedStudentIds.length) return showToast?.({ type: 'error', title: 'No students', message: 'Select at least one student.' });
+
+    let pickedName = (activityText || '').trim();
+    const picked = (currMeta?.activities || []).find((a) => String(a.id) === String(activityId));
+
+    let catId = categoryId || null;
+    let arId = areaId || null;
+    let arLabel = '';
+
+    if (picked) {
+      pickedName = picked.name;
+      const cat = (currMeta?.categories || []).find((c) => String(c.id) === String(picked.category_id));
+      const area = cat ? (currMeta?.areas || []).find((ar) => String(ar.id) === String(cat.area_id)) : null;
+      catId = picked.category_id;
+      arId = area?.id || areaId;
+      arLabel = area?.name || '';
+    } else {
+      const cat = (currMeta?.categories || []).find((c) => String(c.id) === String(categoryId));
+      const area = cat ? (currMeta?.areas || []).find((ar) => String(ar.id) === String(cat.area_id)) : null;
+      if (area) {
+        arId = area.id;
+        arLabel = area.name;
+      }
+    }
+
+    if (!pickedName) return showToast?.({ type: 'error', title: 'Missing activity', message: 'Pick an activity or type one.' });
+
+    const finalDate = date || activeDateISO || dateISO(new Date());
+    const notes = (subNote || '').trim();
+
+    try {
+      await Promise.all(
+        selectedStudentIds.map((student_id) =>
+          onQuickAdd?.({
+            student_id,
+            status,
+            date: finalDate,
+            activity: pickedName,
+            notes,
+            raw_activity: notes,
+            curriculum_activity_id: picked?.id || null,
+            curriculum_category_id: catId,
+            curriculum_area_id: arId,
+            area: arLabel
+          })
+        )
+      );
+      showToast?.({ type: 'success', title: 'Added', message: `Added “${pickedName}” for ${selectedStudentIds.length} student(s).` });
+      onClose?.();
+    } catch (e) {
+      showToast?.({ type: 'error', title: 'Error', message: e?.message || 'Failed to add.' });
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <Modal title="Add activity" onClose={onClose} width={900}>
+      <div style={{ display: 'grid', gap: 16, maxHeight: '80vh', overflowY: 'auto', paddingRight: 4 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Classroom</div>
+            <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: '10px 12px', background: '#fff', fontWeight: 600, color: THEME.text }}>
+              {classroom?.name || '—'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Status</div>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
+              <option value="P">To Present</option>
+              <option value="W">Practicing</option>
+              <option value="A">Next Month Aim</option>
+              <option value="M">Mastered</option>
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Date (optional)</div>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }} />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '0.9fr 0.9fr 1.2fr', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Area</div>
+            <select value={areaId} onChange={(e) => { setAreaId(e.target.value); setCategoryId(''); setActivityId(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
+              {areaOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Category</div>
+            <select value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setActivityId(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
+              {categoryOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Activity</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '0.9fr 1.1fr', gap: 10 }}>
+              <select value={activityId} onChange={(e) => { setActivityId(e.target.value); setActivityText(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
+                {activityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+
+              <input value={activityText} onChange={(e) => { setActivityText(e.target.value); setActivityId(''); }} placeholder="Custom activity…" style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }} />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Note / Sub-activity</div>
+          <textarea value={subNote} onChange={(e) => setSubNote(e.target.value)} style={{ width: '100%', minHeight: 90, padding: '10px', borderRadius: 12, border: '1px solid #ddd', resize: 'vertical' }} />
+        </div>
+
+        <div style={{ border: '1px solid #ddd', borderRadius: 14, overflow: 'hidden', background: '#fff' }}>
+          <div style={{ padding: '10px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee' }}>
+            <div style={{ fontWeight: 700 }}>Students ({selectedStudentIds.length})</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button variant="ghost" onClick={selectAllFiltered} style={{ padding: '4px 8px' }}>Select all</Button>
+              <Button variant="ghost" onClick={clearAll} style={{ padding: '4px 8px' }}>Clear</Button>
+            </div>
+          </div>
+
+          <div style={{ padding: 10, display: 'grid', gap: 10 }}>
+            <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="Search student..." style={{ width: '100%', padding: '8px', borderRadius: 8, border: '1px solid #ddd' }} />
+            <div style={{ maxHeight: 200, overflow: 'auto' }}>
+              {filteredStudents.map((s) => (
+                <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, cursor: 'pointer', background: selectedStudentIds.includes(s.id) ? '#eef' : '#fff' }}>
+                  <input type="checkbox" checked={selectedStudentIds.includes(s.id)} onChange={() => toggleStudent(s.id)} />
+                  <div style={{ fontWeight: 600 }}>{s.first_name} {s.last_name}</div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={save}>ADD</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** ---------------------------
+ * MAIN COMPONENT
+ * --------------------------- */
 export default function IndividualPlanner({
   profile,
   forcedStudentId,
@@ -89,33 +314,42 @@ export default function IndividualPlanner({
   onMoveItemToDate,
   onDeleteItem,
   curriculum,
-  showToast
+  showToast,
+  curriculumAreas,
+  curriculumCategories
 }) {
   const [selectedId, setSelectedId] = useState(forcedStudentId || null);
   const [filterClass, setFilterClass] = useState(classrooms[0]?.id);
-
   const [tab, setTab] = useState('KANBAN');
   const [editingItem, setEditingItem] = useState(null);
 
-  // collapse-by-default on entering kanban (no regression)
-  const [expandAction, setExpandAction] = useState({ type: 'COLLAPSE', ts: Date.now() });
-
-  // search + filters
-  const [studentSearch, setStudentSearch] = useState('');
+  // Filters
   const [search, setSearch] = useState('');
   const [areaFilter, setAreaFilter] = useState('ALL');
   const [catFilter, setCatFilter] = useState('ALL');
 
-  // simplified quick add modal
-  const [qaOpen, setQaOpen] = useState(false);
+  // --- CRITICAL FIX: Default to EXPAND to prevent hidden items ---
+  const [expandAction, setExpandAction] = useState({ type: 'EXPAND', ts: Date.now() });
+
+  // Add modal state
+  const [addOpen, setAddOpen] = useState(false);
+  const [addStatusDefault, setAddStatusDefault] = useState('P');
+  const [addDefaultDate, setAddDefaultDate] = useState('');
 
   useEffect(() => {
     if (forcedStudentId) setSelectedId(forcedStudentId);
   }, [forcedStudentId]);
 
+  // --- FORCE EXPAND WHEN TAB OR STUDENT CHANGES ---
   useEffect(() => {
-    if (tab === 'KANBAN') setExpandAction({ type: 'COLLAPSE', ts: Date.now() });
-  }, [tab]);
+    if (tab === 'KANBAN' && selectedId) {
+       // Small timeout to ensure the DOM is ready to receive the expand signal
+       const t = setTimeout(() => {
+         setExpandAction({ type: 'EXPAND', ts: Date.now() });
+       }, 50);
+       return () => clearTimeout(t);
+    }
+  }, [tab, selectedId]);
 
   const isParentLocked = !!forcedStudentId;
 
@@ -123,10 +357,69 @@ export default function IndividualPlanner({
     () => students.find((s) => String(s.id) === String(selectedId)),
     [students, selectedId]
   );
+  
+  const selectedClassroom = useMemo(
+    () => classrooms.find((c) => String(c.id) === String(student?.classroom_id)),
+    [classrooms, student]
+  );
+
+  const classroomStudents = useMemo(
+    () => (students || []).filter((s) => String(s.classroom_id) === String(student?.classroom_id)),
+    [students, student]
+  );
+
+  // --- Curriculum Meta Logic ---
+  const currMeta = useMemo(() => {
+    let areas = (curriculumAreas || []).slice();
+    let categories = (curriculumCategories || []).slice();
+
+    // Fill data if not provided via props directly
+    if (areas.length === 0 || categories.length === 0) {
+      const areaMap = new Map();
+      const catMap = new Map();
+      (curriculum || []).forEach((item) => {
+        const aId = item.curriculum_area_id || item.area_id;
+        const aName = item.area || item.curriculum_area_name;
+        if (aId && !areaMap.has(String(aId))) areaMap.set(String(aId), { id: aId, name: aName || 'Area' });
+
+        const cId = item.curriculum_category_id || item.category_id;
+        const cName = item.category || item.curriculum_category_name;
+        if (cId && !catMap.has(String(cId))) catMap.set(String(cId), { id: cId, name: cName || 'Category', area_id: aId });
+      });
+      if (areas.length === 0) areas = Array.from(areaMap.values());
+      if (categories.length === 0) categories = Array.from(catMap.values());
+    }
+
+    const acts = (curriculum || []).map((a) => ({
+      id: a.id,
+      name: a.name || a.activity || 'Untitled',
+      category_id: a.curriculum_category_id || a.category_id,
+      area_id: a.curriculum_area_id || a.area_id
+    }));
+
+    return { areas, categories, activities: acts };
+  }, [curriculum, curriculumAreas, curriculumCategories]);
+
+  // --- Filter Options ---
+  const areaFilterOptions = useMemo(() => {
+    return ['ALL', ...currMeta.areas.map(a => a.name).sort()];
+  }, [currMeta]);
+
+  const catFilterOptions = useMemo(() => {
+    let cats = currMeta.categories;
+    if (areaFilter !== 'ALL') {
+      const ar = currMeta.areas.find(a => a.name === areaFilter);
+      if (ar) cats = cats.filter(c => String(c.area_id) === String(ar.id));
+    }
+    return ['ALL', ...cats.map(c => c.name).sort()];
+  }, [currMeta, areaFilter]);
+
+  const editAreaOptions = useMemo(() => currMeta.areas.map(a => a.name).sort(), [currMeta]);
+  const editCategoryOptions = useMemo(() => currMeta.categories.map(c => c.name).sort(), [currMeta]);
 
   const allStudentPlans = useMemo(() => {
     if (!selectedId) return [];
-    return planItems.filter((p) => String(p.student_id) === String(selectedId));
+    return (planItems || []).filter((p) => String(p.student_id) === String(selectedId));
   }, [planItems, selectedId]);
 
   const planById = useMemo(() => {
@@ -136,11 +429,9 @@ export default function IndividualPlanner({
   }, [allStudentPlans]);
 
   const activeDateObj = useMemo(() => toDateObj(activeDate) || new Date(), [activeDate]);
-
   const currentMonthKey = useMemo(() => monthKeyFromDate(activeDateObj), [activeDateObj]);
   const nextMonthObj = useMemo(() => addMonths(activeDateObj, 1), [activeDateObj]);
   const nextMonthKey = useMemo(() => monthKeyFromDate(nextMonthObj), [nextMonthObj]);
-
   const currentMonthFirstISO = useMemo(() => firstOfMonthISO(activeDateObj), [activeDateObj]);
   const nextMonthFirstISO = useMemo(() => firstOfMonthISO(nextMonthObj), [nextMonthObj]);
 
@@ -148,88 +439,58 @@ export default function IndividualPlanner({
     return (it, key) => monthKeyFromDate(getItemDateObj(it)) === key;
   }, []);
 
-  // filter options
-  const areaOptions = useMemo(() => {
-    const set = new Set();
-    allStudentPlans.forEach((it) => {
-      const n = getNormalizedItem(it);
-      set.add(bucketArea(n.area));
-    });
-    return Array.from(set).sort();
-  }, [allStudentPlans]);
-
-  const categoryOptions = ifyCatOptions(allStudentPlans);
-
-  function ifyCatOptions(items) {
-    const set = new Set();
-    (items || []).forEach((it) => {
-      const cat =
-        (it.curriculum_categories?.name || '').trim() ||
-        (it.category || '').trim() ||
-        'Uncategorized';
-      set.add(cat);
-    });
-    return Array.from(set).sort();
-  }
-
   const matchesFilters = useMemo(() => {
     const q = (search || '').trim().toLowerCase();
-
     return (it) => {
       const n = getNormalizedItem(it);
-      const area = bucketArea(n.area);
-      const cat =
-        (it.curriculum_categories?.name || '').trim() ||
-        (it.category || '').trim() ||
-        'Uncategorized';
+      const itemArea = n.area || (it.curriculum_areas?.name || '').trim();
+      const itemCat = (it.curriculum_categories?.name || it.category || 'Uncategorized').trim();
 
-      if (areaFilter !== 'ALL' && area !== areaFilter) return false;
-      if (catFilter !== 'ALL' && cat !== catFilter) return false;
+      if (areaFilter !== 'ALL' && itemArea !== areaFilter) return false;
+      if (catFilter !== 'ALL' && itemCat !== catFilter) return false;
 
       if (!q) return true;
-
       const fields = [
-        n.title,
-        n.rawActivity,
-        n.notes,
-        it.activity,
-        it.raw_activity,
-        it.notes,
-        it.session_label,
-        area,
-        cat
-      ]
-        .filter(Boolean)
-        .map((x) => String(x).toLowerCase());
-
+        n.title, n.rawActivity, n.notes,
+        it.activity, it.raw_activity, it.notes, it.session_label,
+        itemArea, itemCat
+      ].filter(Boolean).map((x) => String(x).toLowerCase());
       return fields.some((f) => f.includes(q));
     };
   }, [search, areaFilter, catFilter]);
 
-  // board columns:
-  // P/W = CURRENT month, A = NEXT month
   const columnItems = useMemo(() => {
     const currMonth = allStudentPlans.filter((it) => inMonthKey(it, currentMonthKey));
     const nextMonth = allStudentPlans.filter((it) => inMonthKey(it, nextMonthKey));
 
     return {
-      P: currMonth.filter((it) => it.status === 'P').filter(matchesFilters),
-      W: currMonth.filter((it) => it.status === 'W').filter(matchesFilters),
-      A: nextMonth.filter((it) => it.status === 'A').filter(matchesFilters)
+      P: currMonth.filter((it) => normStatus(it.status) === 'P').filter(matchesFilters),
+      W: currMonth.filter((it) => normStatus(it.status) === 'W').filter(matchesFilters),
+      A: nextMonth.filter((it) => normStatus(it.status) === 'A').filter(matchesFilters)
     };
   }, [allStudentPlans, currentMonthKey, nextMonthKey, inMonthKey, matchesFilters]);
 
-  // drag drop status change
-  const onMoveItemStatus = async (itemId, newStatus) => {
+  const topStats = useMemo(() => {
+    const p = columnItems.P.length;
+    const w = columnItems.W.length;
+    const a = columnItems.A.length;
+    const total = p + w + a;
+    return { p, w, a, total };
+  }, [columnItems]);
+
+  const openAdd = (status, dateStr = '') => {
+    setAddStatusDefault(status);
+    setAddDefaultDate(dateStr);
+    setAddOpen(true);
+  };
+
+  const onMoveItemStatus = async (itemId, newStatusRaw) => {
     const it = planById.get(String(itemId));
     if (!it) return;
 
+    const newStatus = normStatus(newStatusRaw);
     try {
-      const targetDate =
-        newStatus === 'A'
-          ? nextMonthFirstISO
-          : (activeDate || dateISO(new Date()));
-
+      const targetDate = newStatus === 'A' ? nextMonthFirstISO : (activeDate || dateISO(new Date()));
       const updatePayload = {
         ...it,
         status: newStatus,
@@ -238,18 +499,11 @@ export default function IndividualPlanner({
         month: Number(targetDate.slice(5, 7)),
         day: Number(targetDate.slice(8, 10))
       };
-
       await onUpdateItem?.(updatePayload);
-
       showToast?.({
         type: 'success',
         title: 'Updated',
-        message:
-          newStatus === 'A'
-            ? 'Moved to Next Month Aim.'
-            : newStatus === 'W'
-            ? 'Moved to Practicing.'
-            : 'Moved to To Present.'
+        message: newStatus === 'A' ? 'Moved to Next Month Aim.' : 'Moved status.'
       });
     } catch (e) {
       console.error(e);
@@ -257,91 +511,46 @@ export default function IndividualPlanner({
     }
   };
 
-  /** ---------------------------
-   *  STUDENT PICKER
-   *  --------------------------- */
   if (!selectedId) {
-    const filteredStudents = students
+    const filteredStudents = (students || [])
       .filter((s) => String(s.classroom_id) === String(filterClass))
       .filter((s) => {
-        const q = (studentSearch || '').trim().toLowerCase();
+        const q = (search || '').trim().toLowerCase();
         if (!q) return true;
         return `${s.first_name || ''} ${s.last_name || ''}`.toLowerCase().includes(q);
       });
 
     return (
-      <div>
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div style={{ width: '100%', maxWidth: '100%' }}>
+         <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           {classrooms.map((c) => (
             <button
               key={c.id}
               onClick={() => setFilterClass(c.id)}
               style={{
-                border: 'none',
-                cursor: 'pointer',
-                padding: '12px 20px',
+                border: 'none', cursor: 'pointer', padding: '12px 20px',
                 background: String(filterClass) === String(c.id) ? THEME.brandPrimary : '#fff',
                 color: String(filterClass) === String(c.id) ? '#fff' : THEME.text,
-                boxShadow:
-                  String(filterClass) === String(c.id)
-                    ? `6px 6px 0px 0px ${THEME.brandSecondary}`
-                    : '2px 2px 0px #eee',
-                fontWeight: 700,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 10,
-                transition: 'all 0.2s'
+                boxShadow: String(filterClass) === String(c.id) ? `6px 6px 0px 0px ${THEME.brandSecondary}` : '2px 2px 0px #eee',
+                fontWeight: 700
               }}
             >
               {c.name}
             </button>
           ))}
         </div>
-
         <Card style={{ padding: 14, marginBottom: 18 }}>
           <input
-            value={studentSearch}
-            onChange={(e) => setStudentSearch(e.target.value)}
+            value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search student…"
-            style={{
-              width: '100%',
-              padding: '12px 12px',
-              border: '1px solid #eee',
-              fontWeight: 600
-            }}
+            style={{ width: '100%', padding: '12px 12px', border: '1px solid #eee', fontWeight: 600 }}
           />
         </Card>
-
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 24 }}>
           {filteredStudents.map((s) => (
-            <Card
-              key={s.id}
-              onClick={() => {
-                setSelectedId(s.id);
-                setExpandAction({ type: 'COLLAPSE', ts: Date.now() });
-              }}
-              style={{ padding: 30, cursor: 'pointer', textAlign: 'center' }}
-            >
-              <div
-                style={{
-                  width: 70,
-                  height: 70,
-                  background: THEME.brandAccent,
-                  margin: '0 auto 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 24,
-                  fontWeight: 900,
-                  color: THEME.text,
-                  clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)'
-                }}
-              >
-                {s.first_name?.[0] || '?'}
-              </div>
-              <div style={{ fontWeight: 600, fontSize: 18 }}>
-                {s.first_name} {s.last_name}
-              </div>
+            <Card key={s.id} onClick={() => { setSelectedId(s.id); setSearch(''); }} style={{ padding: 30, cursor: 'pointer', textAlign: 'center' }}>
+              <div style={{ width: 70, height: 70, background: THEME.brandAccent, margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900, color: THEME.text, clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}>{s.first_name?.[0] || '?'}</div>
+              <div style={{ fontWeight: 600, fontSize: 18 }}>{s.first_name} {s.last_name}</div>
             </Card>
           ))}
         </div>
@@ -349,386 +558,193 @@ export default function IndividualPlanner({
     );
   }
 
-  /** ---------------------------
-   *  SELECTED STUDENT
-   *  --------------------------- */
+  // --- Selected Student View ---
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          {!isParentLocked && (
-            <Button variant="ghost" onClick={() => setSelectedId(null)} style={{ paddingLeft: 0, fontSize: 13 }}>
-              ← All Students
-            </Button>
-          )}
-          <div>
-            <h2 style={{ fontSize: 32, margin: 0, fontFamily: THEME.serifFont, color: THEME.text }}>
-              {student?.first_name} {student?.last_name}
-            </h2>
-            <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: THEME.textMuted }}>
-              {classrooms.find((c) => String(c.id) === String(student?.classroom_id))?.name || ''}
+    <div style={{ width: '100%', maxWidth: '100%', overflowX: 'auto', paddingBottom: 24 }}>
+      <AddActivityModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        statusDefault={addStatusDefault}
+        defaultDate={addDefaultDate}
+        classroom={selectedClassroom}
+        classroomStudents={classroomStudents}
+        preSelectedStudentId={student?.id}
+        currMeta={currMeta}
+        activeDateISO={dateISO(activeDateObj)}
+        onQuickAdd={onQuickAdd}
+        showToast={showToast}
+      />
+
+      <div style={{ minWidth: 980 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {!isParentLocked && (
+              <Button variant="ghost" onClick={() => setSelectedId(null)} style={{ paddingLeft: 0, fontSize: 13 }}>← All Students</Button>
+            )}
+            <div>
+              <h2 style={{ fontSize: 32, margin: 0, fontFamily: THEME.serifFont, color: THEME.text }}>
+                {student?.first_name} {student?.last_name}
+              </h2>
+              <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: THEME.textMuted }}>
+                {classrooms.find((c) => String(c.id) === String(student?.classroom_id))?.name || ''}
+              </div>
             </div>
           </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Button variant="secondary" onClick={() => setQaOpen(true)}>
-            + Add
-          </Button>
-
-          <Button variant={tab === 'KANBAN' ? 'active' : 'ghost'} onClick={() => setTab('KANBAN')}>
-            Overview
-          </Button>
-          <Button variant={tab === 'PLAN' ? 'active' : 'ghost'} onClick={() => setTab('PLAN')}>
-            Week Plan
-          </Button>
-          <Button variant={tab === 'REPORT' ? 'active' : 'ghost'} onClick={() => setTab('REPORT')}>
-            Report
-          </Button>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      {tab === 'PLAN' && (
-        <PlannerTab
-          student={student}
-          studentPlans={allStudentPlans}
-          masterPlans={masterPlans}
-          planSessions={planSessions}
-          activeDate={activeDate}
-          setActiveDate={setActiveDate}
-          onQuickAdd={onQuickAdd}
-          onMoveItemToDate={onMoveItemToDate}
-          setEditingItem={setEditingItem}
-          curriculum={curriculum}
-          showToast={showToast}
-        />
-      )}
-
-{tab === 'KANBAN' && (
-  <div>
-    {/* Month bar (clean, compact) */}
-    <Card style={{ padding: 14, marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 16, color: THEME.text, fontFamily: THEME.serifFont }}>
-            {monthLabel(activeDateObj)}
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted }}>
-            {student?.first_name} • {classrooms.find((c) => String(c.id) === String(student?.classroom_id))?.name || ''}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Button variant={tab === 'KANBAN' ? 'active' : 'ghost'} onClick={() => setTab('KANBAN')}>Montly Plan</Button>
+            <Button variant={tab === 'PLAN' ? 'active' : 'ghost'} onClick={() => setTab('PLAN')}>Week Plan</Button>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button variant="ghost" onClick={() => setActiveDate(firstOfMonthISO(addMonths(activeDateObj, -1)))}>
-            ← Prev
-          </Button>
-          <input type="date" value={activeDate} onChange={(e) => setActiveDate(e.target.value)} style={inputStyle()} />
-          <Button variant="ghost" onClick={() => setActiveDate(firstOfMonthISO(addMonths(activeDateObj, 1)))}>
-            Next →
-          </Button>
-        </div>
-      </div>
-    </Card>
-
-    {/* Filters row (clean spacing) */}
-    <Card style={{ padding: 12, marginBottom: 14 }}>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Button variant="ghost" onClick={() => setExpandAction({ type: 'EXPAND', ts: Date.now() })}>
-          Expand All
-        </Button>
-        <Button variant="ghost" onClick={() => setExpandAction({ type: 'COLLAPSE', ts: Date.now() })}>
-          Collapse All
-        </Button>
-
-        <div style={{ width: 1, height: 28, background: '#eee', margin: '0 4px' }} />
-
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search activity or teacher bullet…"
-          style={{
-            padding: '10px 12px',
-            border: '1px solid #eee',
-            fontWeight: 700,
-            minWidth: 260
-          }}
-        />
-
-        <select
-          value={areaFilter}
-          onChange={(e) => setAreaFilter(e.target.value)}
-          style={{ padding: '10px 12px', border: '1px solid #eee', fontWeight: 700 }}
-        >
-          <option value="ALL">All Areas</option>
-          {areaOptions.map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </select>
-
-        <select
-          value={catFilter}
-          onChange={(e) => setCatFilter(e.target.value)}
-          style={{ padding: '10px 12px', border: '1px solid #eee', fontWeight: 700 }}
-        >
-          <option value="ALL">All Categories</option>
-          {categoryOptions.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-
-        <div style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: THEME.textMuted }}>
-          Drag to change status
-        </div>
-      </div>
-    </Card>
-
-    {/* Kanban */}
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 18 }}>
-      <KanbanColumn
-        key="P"
-        status="P"
-        items={columnItems.P}
-        students={students}
-        classrooms={classrooms}
-        onEditItem={setEditingItem}
-        onDeleteItem={onDeleteItem}
-        expandAction={expandAction}
-        selectedClassroomId={student?.classroom_id}
-        mode="SINGLE_STUDENT"
-        onMoveItemStatus={onMoveItemStatus}
-        getItemById={(id) => planById.get(String(id))}
-        columnLabelOverride={`To Present — ${monthLabel(activeDateObj)}`}
-      />
-
-      <KanbanColumn
-        key="W"
-        status="W"
-        items={columnItems.W}
-        students={students}
-        classrooms={classrooms}
-        onEditItem={setEditingItem}
-        onDeleteItem={onDeleteItem}
-        expandAction={expandAction}
-        selectedClassroomId={student?.classroom_id}
-        mode="SINGLE_STUDENT"
-        onMoveItemStatus={onMoveItemStatus}
-        getItemById={(id) => planById.get(String(id))}
-        columnLabelOverride={`Practicing — ${monthLabel(activeDateObj)}`}
-      />
-
-      <KanbanColumn
-        key="A"
-        status="A"
-        items={columnItems.A}
-        students={students}
-        classrooms={classrooms}
-        onEditItem={setEditingItem}
-        onDeleteItem={onDeleteItem}
-        expandAction={expandAction}
-        selectedClassroomId={student?.classroom_id}
-        mode="SINGLE_STUDENT"
-        onMoveItemStatus={onMoveItemStatus}
-        getItemById={(id) => planById.get(String(id))}
-        columnLabelOverride={`Next Month Aim — ${monthLabel(nextMonthObj)}`}
-      />
-    </div>
-  </div>
-)}
-
-
-      {tab === 'REPORT' && <StudentReportView student={student} allPlans={allStudentPlans} />}
-
-      {editingItem && (
-        <EditActivityModal
-          item={editingItem}
-          curriculum={curriculum}
-          areaOptions={areaOptions}
-          categoryOptions={categoryOptions}
-          onSave={onUpdateItem}
-          onDelete={onDeleteItem}
-          onClose={() => setEditingItem(null)}
-        />
-      )}
-
-      {/* Simplified quick add modal */}
-      <QuickAddLiteModal
-        open={qaOpen}
-        onClose={() => setQaOpen(false)}
-        curriculum={curriculum || []}
-        defaultStudentId={student?.id}
-        currentMonthFirstISO={currentMonthFirstISO}
-        nextMonthFirstISO={nextMonthFirstISO}
-        onSubmit={async (payload) => {
-          try {
-            const chosenStatus = payload.status || 'P';
-            const finalDate =
-              payload.date ||
-              (chosenStatus === 'A' ? nextMonthFirstISO : (activeDate || dateISO(new Date())));
-
-            await onQuickAdd?.({
-              student_id: student.id,
-              status: chosenStatus,
-              date: finalDate,
-              activity: payload.activity,
-              curriculum_activity_id: payload.curriculum_activity_id || null,
-              curriculum_area_id: payload.curriculum_area_id || null,
-              raw_activity: payload.raw_activity || null
-            });
-
-            showToast?.({ type: 'success', title: 'Added', message: 'Activity added.' });
-          } catch (e) {
-            console.error(e);
-            showToast?.({ type: 'error', title: 'Add failed', message: 'Could not add activity.' });
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-/** ---------------------------
- *  REPORT (unchanged)
- *  --------------------------- */
-function StudentReportView({ student, allPlans }) {
-  const byStatus = useMemo(() => {
-    const total = allPlans.length;
-    const m = allPlans.filter((p) => p.status === 'M').length;
-    const w = allPlans.filter((p) => p.status === 'W').length;
-    const p = allPlans.filter((p) => p.status === 'P').length;
-    const a = allPlans.filter((p) => p.status === 'A').length;
-    return { total, m, w, p, a };
-  }, [allPlans]);
-
-  const byArea = useMemo(() => {
-    const map = {};
-    allPlans.forEach((it) => {
-      const n = getNormalizedItem(it);
-      const key = (n.area || '').trim() ? n.area : 'General';
-      map[key] = map[key] || { total: 0, M: 0, W: 0, P: 0, A: 0 };
-      map[key].total += 1;
-      map[key][it.status] = (map[key][it.status] || 0) + 1;
-    });
-    return Object.entries(map).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
-  }, [allPlans]);
-
-  const recent = useMemo(() => {
-    return allPlans
-      .slice()
-      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-      .slice(0, 10);
-  }, [allPlans]);
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 30 }}>
-      <Card style={{ padding: 30 }}>
-        <h3 style={{ fontFamily: THEME.serifFont, marginTop: 0, marginBottom: 6 }}>Progress Report</h3>
-        <div style={{ color: THEME.textMuted, fontWeight: 600, fontSize: 13 }}>Overall progress + breakdown by area</div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginTop: 24 }}>
-          <StatBox label="Mastered" value={byStatus.m} bg="#E8F5E9" border="1px solid #E0F2E9" />
-          <StatBox label="Practicing" value={byStatus.w} bg="#FFF8EB" border="1px solid #F5E7C8" />
-          <StatBox label="To Present" value={byStatus.p} bg="#F3F4F6" border="1px solid #eee" />
-          <StatBox label="Aim (A)" value={byStatus.a} bg="#F7F1FF" border="1px solid #EEE3FF" />
-          <StatBox label="Total" value={byStatus.total} bg="#fff" border="1px solid #eee" />
-        </div>
-
-        <div style={{ marginTop: 30 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted, textTransform: 'uppercase', marginBottom: 16 }}>
-            Progress by area
-          </div>
-
-          <div style={{ display: 'grid', gap: 14 }}>
-            {byArea.map(([area, stats]) => {
-              const subj = getSubjectStyle(area);
-              const pct = stats.total ? Math.round(((stats.M || 0) / stats.total) * 100) : 0;
-              return (
-                <div key={area} style={{ padding: 16, border: `1px solid ${subj.border}`, background: '#fff' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
-                    <div style={{ fontWeight: 600, color: THEME.text }}>
-                      <span style={{ color: subj.text }}>{area}</span>
-                      <span style={{ marginLeft: 8, fontSize: 12, color: THEME.textMuted, fontWeight: 600 }}>
-                        {stats.total} activities
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: THEME.textMuted }}>{pct}% mastered</div>
-                  </div>
-                  <div style={{ marginTop: 10, height: 8, background: '#f0f0f0', overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: subj.accent }} />
-                  </div>
-                </div>
-              );
-            })}
-            {byArea.length === 0 && <div style={{ opacity: 0.6, fontStyle: 'italic' }}>No activity data yet.</div>}
-          </div>
-        </div>
-      </Card>
-
-      <div style={{ display: 'grid', gap: 22 }}>
-        <Card style={{ padding: 22 }}>
-          <h3 style={{ fontFamily: THEME.serifFont, marginTop: 0, marginBottom: 6 }}>Activity Feed</h3>
-          <div style={{ fontSize: 13, color: THEME.textMuted, fontWeight: 600, marginBottom: 16 }}>Latest updates</div>
-          {recent.length === 0 && <div style={{ opacity: 0.6, fontStyle: 'italic' }}>No activities yet.</div>}
-          <div style={{ display: 'grid', gap: 12 }}>
-            {recent.map((r) => {
-              const n = getNormalizedItem(r);
-              const subj = getSubjectStyle(n.area);
-              return (
-                <div key={r.id} style={{ padding: 14, border: '1px solid #eee', background: '#fff', borderLeft: `4px solid ${subj.accent}` }}>
-                  <div style={{ fontWeight: 800, fontSize: 13 }}>{n.title}</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 700 }}>
-                    {n.area} • {r.status || '-'} • {safeDate(r.planning_date)}
-                  </div>
-                </div>
-              );
-            })}
+        <Card style={{ padding: 12, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+            <TopStat label={`To Present — ${monthLabel(activeDateObj)}`} value={topStats.p} tone="P" />
+            <TopStat label={`Practicing — ${monthLabel(activeDateObj)}`} value={topStats.w} tone="W" />
+            <TopStat label={`Aim — ${monthLabel(nextMonthObj)}`} value={topStats.a} tone="A" />
+            <TopStat label="Total (shown)" value={topStats.total} tone="TOTAL" />
           </div>
         </Card>
+
+        {tab === 'PLAN' && (
+          <PlannerTab
+            student={student}
+            studentPlans={allStudentPlans}
+            masterPlans={masterPlans}
+            planSessions={planSessions}
+            activeDate={activeDate}
+            setActiveDate={setActiveDate}
+            onQuickAdd={onQuickAdd}
+            onMoveItemToDate={onMoveItemToDate}
+            setEditingItem={setEditingItem}
+            curriculum={curriculum}
+            showToast={showToast}
+          />
+        )}
+
+        {tab === 'KANBAN' && (
+          <div>
+            <Card style={{ padding: 14, marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                   <Button variant="ghost" onClick={() => setActiveDate(firstOfMonthISO(addMonths(activeDateObj, -1)))}>← Prev</Button>
+                   <div style={{ fontWeight: 900, fontSize: 16, color: THEME.text, fontFamily: THEME.serifFont, minWidth: 140, textAlign: 'center' }}>
+                     {monthLabel(activeDateObj)}
+                   </div>
+                   <Button variant="ghost" onClick={() => setActiveDate(firstOfMonthISO(addMonths(activeDateObj, 1)))}>Next →</Button>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, flex: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
+                   {/* Restored Expand/Collapse buttons for functionality */}
+                   <Button variant="ghost" onClick={() => setExpandAction({ type: 'EXPAND', ts: Date.now() })}>Expand</Button>
+                   <Button variant="ghost" onClick={() => setExpandAction({ type: 'COLLAPSE', ts: Date.now() })}>Collapse</Button>
+                   
+                   <div style={{ height: 20, width: 1, background: '#eee', margin: '0 8px' }} />
+                   
+                   <input
+                    value={search} onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search activity..."
+                    style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, width: 200 }}
+                   />
+
+                   <select 
+                     value={areaFilter} 
+                     onChange={(e) => { setAreaFilter(e.target.value); setCatFilter('ALL'); }}
+                     style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, maxWidth: 160 }}
+                   >
+                      {areaFilterOptions.map(o => <option key={o} value={o}>{o === 'ALL' ? 'All Areas' : o}</option>)}
+                   </select>
+
+                   <select 
+                     value={catFilter} 
+                     onChange={(e) => setCatFilter(e.target.value)}
+                     style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, maxWidth: 160 }}
+                   >
+                      {catFilterOptions.map(o => <option key={o} value={o}>{o === 'ALL' ? 'All Categories' : o}</option>)}
+                   </select>
+                </div>
+              </div>
+            </Card>
+
+            <div style={{ width: '100%', overflowX: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(340px, 1fr))', gap: 18, minWidth: 1080 }}>
+                {/* Passed expandAction (default EXPAND) and props to ensure items render correctly */}
+                <KanbanColumn
+                  key="P" status="P" items={columnItems.P}
+                  students={students} classrooms={classrooms}
+                  onEditItem={setEditingItem} onDeleteItem={onDeleteItem}
+                  selectedClassroomId={student?.classroom_id} mode="SINGLE_STUDENT"
+                  onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
+                  columnLabelOverride={`To Present`}
+                  onQuickAdd={() => openAdd('P')}
+                  currMeta={currMeta} 
+                  expandAction={expandAction}
+                />
+                <KanbanColumn
+                  key="W" status="W" items={columnItems.W}
+                  students={students} classrooms={classrooms}
+                  onEditItem={setEditingItem} onDeleteItem={onDeleteItem}
+                  selectedClassroomId={student?.classroom_id} mode="SINGLE_STUDENT"
+                  onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
+                  columnLabelOverride={`Practicing`}
+                  onQuickAdd={() => openAdd('W')}
+                  currMeta={currMeta}
+                  expandAction={expandAction}
+                />
+                <KanbanColumn
+                  key="A" status="A" items={columnItems.A}
+                  students={students} classrooms={classrooms}
+                  onEditItem={setEditingItem} onDeleteItem={onDeleteItem}
+                  selectedClassroomId={student?.classroom_id} mode="SINGLE_STUDENT"
+                  onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
+                  columnLabelOverride={`Aim for ${monthLabel(nextMonthObj)}`}
+                  onQuickAdd={() => openAdd('A', nextMonthFirstISO)}
+                  currMeta={currMeta}
+                  expandAction={expandAction}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {editingItem && (
+          <EditActivityModal
+            item={editingItem}
+            curriculum={curriculum}
+            areaOptions={editAreaOptions}
+            categoryOptions={editCategoryOptions}
+            onSave={onUpdateItem}
+            onDelete={onDeleteItem}
+            onClose={() => setEditingItem(null)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function StatBox({ label, value, bg, border }) {
+function TopStat({ label, value, tone }) {
+  const meta =
+    tone === 'W' ? { bg: '#FFF7E6', border: '1px solid rgba(240,187,107,0.35)' }
+    : tone === 'P' ? { bg: '#EEF5FF', border: '1px solid rgba(10,53,92,0.15)' }
+    : tone === 'A' ? { bg: '#F7F1FF', border: '1px solid rgba(120,80,200,0.18)' }
+    : { bg: '#fff', border: '1px solid #eee' };
+
   return (
-    <div style={{ textAlign: 'center', padding: 16, background: bg, border: border || 'none' }}>
-      <div style={{ fontSize: 24, fontWeight: 900, color: THEME.text, fontFamily: THEME.serifFont }}>{value}</div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted, marginTop: 4 }}>{label}</div>
+    <div style={{ padding: 12, background: meta.bg, border: meta.border }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: THEME.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: THEME.text, fontFamily: THEME.serifFont }}>{value}</div>
     </div>
   );
 }
 
-/** ---------------------------
- *  WEEK PLAN TAB (unchanged)
- *  --------------------------- */
-function PlannerTab({
-  student,
-  studentPlans,
-  masterPlans,
-  planSessions,
-  activeDate,
-  setActiveDate,
-  onQuickAdd,
-  onMoveItemToDate,
-  setEditingItem,
-  curriculum,
-  showToast
-}) {
+function PlannerTab({ student, studentPlans, masterPlans, planSessions, activeDate, setActiveDate, onQuickAdd, onMoveItemToDate, setEditingItem, curriculum, showToast }) {
   const weekStart = startOfWeekMonday(activeDate);
-  const weekDays = Array.from({ length: 5 }, (_, i) => ({
-    label: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'][i],
-    date: dateISO(addDays(weekStart, i))
-  }));
-
+  const weekDays = Array.from({ length: 5 }, (_, i) => ({ label: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'][i], date: dateISO(addDays(weekStart, i)) }));
   const currentWeek = getWeekFromDate(activeDate);
 
   const currSessionsByArea = useMemo(() => {
-    const plans = masterPlans.filter(
-      (p) => Number(p.week_number) === Number(currentWeek) && String(p.classroom_id) === String(student.classroom_id)
-    );
-    const sessions = planSessions.filter((s) => plans.some((p) => String(p.id) === String(s.plan_id)));
-
+    const plans = (masterPlans || []).filter((p) => Number(p.week_number) === Number(currentWeek) && String(p.classroom_id) === String(student.classroom_id));
+    const sessions = (planSessions || []).filter((s) => plans.some((p) => String(p.id) === String(s.plan_id)));
     const groups = {};
     sessions.forEach((s) => {
       const area = (s.curriculum_areas?.name || 'General').trim() || 'General';
@@ -736,81 +752,31 @@ function PlannerTab({
       if (!groups[area]) groups[area] = [];
       groups[area].push({ ...s, __label: label });
     });
-
-    Object.keys(groups).forEach((k) => (groups[k] = groups[k].slice(0, 10)));
     return groups;
   }, [masterPlans, planSessions, currentWeek, student?.classroom_id]);
 
   const sortedAreas = useMemo(() => Object.keys(currSessionsByArea).sort(), [currSessionsByArea]);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 18, alignItems: 'start' }}>
-      {/* Week Builder */}
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 360px) minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
       <Card style={{ padding: 18, height: 'calc(100vh - 220px)', overflow: 'auto', position: 'sticky', top: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
           <div>
             <h3 style={{ margin: 0, fontFamily: THEME.serifFont }}>Week Builder</h3>
-            <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 700 }}>
-              Suggestions from curriculum week {currentWeek} (grouped by area)
-            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 700 }}>Suggestions from curriculum week {currentWeek}</div>
           </div>
-          <Button variant="ghost" onClick={() => setActiveDate(dateISO(new Date()))}>
-            Today
-          </Button>
+          <Button variant="ghost" onClick={() => setActiveDate(dateISO(new Date()))}>Today</Button>
         </div>
-
         <div style={{ marginTop: 14, display: 'grid', gap: 14 }}>
-          {sortedAreas.length === 0 && (
-            <div style={{ padding: 12, background: '#fafafa', border: '1px dashed #ddd', fontSize: 13, color: '#999', fontWeight: 700 }}>
-              No curriculum sessions for this week.
-            </div>
-          )}
-
           {sortedAreas.map((area) => {
-            const subj = getSubjectStyle(area);
+            const subj = getSubjectStyle ? getSubjectStyle(area) : { border: '#ccc', bg: '#fff', text: '#333' };
             return (
               <div key={area} style={{ border: `1px solid ${subj.border}`, background: '#fff' }}>
-                <div
-                  style={{
-                    padding: '10px 12px',
-                    background: subj.bg,
-                    borderBottom: '1px solid rgba(0,0,0,0.05)',
-                    fontWeight: 900,
-                    color: subj.text,
-                    textTransform: 'uppercase',
-                    fontSize: 12,
-                    letterSpacing: 0.6
-                  }}
-                >
-                  {area}
-                </div>
-
+                <div style={{ padding: '10px 12px', background: subj.bg, borderBottom: '1px solid rgba(0,0,0,0.05)', fontWeight: 900, color: subj.text, textTransform: 'uppercase', fontSize: 12 }}>{area}</div>
                 <div style={{ padding: 10, display: 'grid', gap: 10 }}>
                   {currSessionsByArea[area].map((s) => (
-                    <div
-                      key={s.id}
-                      draggable
-                      onDragStart={(e) =>
-                        e.dataTransfer.setData('item', JSON.stringify({ type: 'CURR_SESSION', id: s.id }))
-                      }
-                      style={{
-                        padding: 10,
-                        border: '1px solid #eee',
-                        background: 'white',
-                        cursor: 'grab',
-                        boxShadow: '2px 2px 0px rgba(0,0,0,0.05)'
-                      }}
-                      title="Drag into a day"
-                    >
-                      <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>
-                        {s.session_label ? `${s.session_label} — ` : ''}
-                        {s.__label}
-                      </div>
-                      {s.teacher_notes && (
-                        <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 700 }}>
-                          {s.teacher_notes}
-                        </div>
-                      )}
+                    <div key={s.id} draggable onDragStart={(e) => e.dataTransfer.setData('item', JSON.stringify({ type: 'CURR_SESSION', id: s.id }))} style={{ padding: 10, border: '1px solid #eee', background: 'white', cursor: 'grab' }}>
+                      <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text }}>{s.session_label ? `${s.session_label} — ` : ''}{s.__label}</div>
                     </div>
                   ))}
                 </div>
@@ -819,273 +785,39 @@ function PlannerTab({
           })}
         </div>
       </Card>
-
-      {/* Weekly Plan */}
-      <div>
+      <div style={{ minWidth: 0 }}>
         <Card style={{ padding: 16, marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <div style={{ fontWeight: 800, fontFamily: THEME.serifFont }}>Weekly Plan</div>
               <input type="date" value={activeDate} onChange={(e) => setActiveDate(e.target.value)} style={inputStyle()} />
             </div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted }}>
-              Drag from Week Builder into a day.
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted }}>Drag from Week Builder into a day.</div>
           </div>
         </Card>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
-          {weekDays.map((d) => (
-            <div
-              key={d.date}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={async (e) => {
-                e.preventDefault();
-                try {
-                  const payload = JSON.parse(e.dataTransfer.getData('item'));
-                  if (payload.type === 'PLAN_ITEM') {
-                    onMoveItemToDate(payload, d.date);
-                    return;
-                  }
-                  if (payload.type === 'CURR_SESSION') {
-                    const session = planSessions.find((x) => String(x.id) === String(payload.id));
-                    if (!session) return;
-
-                    await onQuickAdd({
-                      student_id: student.id,
-                      activity:
-                        session.curriculum_activities?.name ||
-                        session.raw_activity ||
-                        session.session_label ||
-                        'Curriculum Activity',
-                      status: 'P',
-                      date: d.date,
-                      curriculum_activity_id: session.curriculum_activity_id,
-                      curriculum_area_id: session.curriculum_area_id,
-                      raw_activity: session.raw_activity || null
-                    });
-                    return;
-                  }
-                } catch (err) {
-                  console.error(err);
-                }
-              }}
-              style={{
-                background: 'white',
-                padding: 10,
-                minHeight: 420,
-                border: '1px solid #eee',
-                boxShadow: THEME.cardShadow,
-                overflow: 'hidden'
-              }}
-            >
-              <div style={{ textAlign: 'center', fontWeight: 900, marginBottom: 12, color: THEME.text }}>
-                {d.label}
-                <div style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 700, marginTop: 2 }}>{safeDate(d.date)}</div>
+        <div style={{ width: '100%', overflowX: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(240px, 1fr))', gap: 10, minWidth: 1200 }}>
+            {weekDays.map((d) => (
+              <div key={d.date} onDragOver={(e) => e.preventDefault()} onDrop={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const payload = JSON.parse(e.dataTransfer.getData('item'));
+                    if (payload.type === 'PLAN_ITEM') onMoveItemToDate(payload, d.date);
+                    if (payload.type === 'CURR_SESSION') {
+                       const session = (planSessions || []).find((x) => String(x.id) === String(payload.id));
+                       if (session) await onQuickAdd({ student_id: student.id, activity: session.curriculum_activities?.name || session.raw_activity || 'Activity', status: 'P', date: d.date, curriculum_activity_id: session.curriculum_activity_id, curriculum_area_id: session.curriculum_area_id, raw_activity: session.raw_activity || null });
+                    }
+                  } catch (err) {}
+                }} style={{ background: 'white', padding: 10, minHeight: 420, border: '1px solid #eee', boxShadow: THEME.cardShadow }}>
+                <div style={{ textAlign: 'center', fontWeight: 900, marginBottom: 12, color: THEME.text }}>{d.label}<div style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 700, marginTop: 2 }}>{safeDate(d.date)}</div></div>
+                {(studentPlans || []).filter((p) => String(p.planning_date || '').startsWith(d.date)).map((i) => (
+                    <div key={i.id} draggable onDragStart={(e) => e.dataTransfer.setData('item', JSON.stringify({ type: 'PLAN_ITEM', id: i.id }))} onClick={() => setEditingItem(i)} style={{ background: '#FAFAFA', padding: 10, marginBottom: 8, fontSize: 12, cursor: 'pointer', border: '1px solid #eee', fontWeight: 800 }}>{getNormalizedItem(i).rawActivity || getNormalizedItem(i).title}</div>
+                  ))}
               </div>
-
-              {studentPlans
-                .filter((p) => String(p.planning_date || '').startsWith(d.date))
-                .map((i) => (
-                  <div
-                    key={i.id}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData('item', JSON.stringify({ type: 'PLAN_ITEM', id: i.id }))}
-                    onClick={() => setEditingItem(i)}
-                    style={{
-                      background: '#FAFAFA',
-                      padding: 10,
-                      marginBottom: 8,
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      border: '1px solid #eee',
-                      fontWeight: 800
-                    }}
-                    title="Click to edit • Drag to move"
-                  >
-                    {getNormalizedItem(i).rawActivity || getNormalizedItem(i).title}
-                  </div>
-                ))}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-/** ---------------------------
- *  QUICK ADD LITE MODAL (embedded)
- *  --------------------------- */
-function QuickAddLiteModal({
-  open,
-  onClose,
-  onSubmit,
-  curriculum = [],
-  defaultStudentId,
-  currentMonthFirstISO,
-  nextMonthFirstISO
-}) {
-  const [status, setStatus] = useState('P');
-  const [date, setDate] = useState('');
-  const [area, setArea] = useState('');
-  const [custom, setCustom] = useState(false);
-  const [activity, setActivity] = useState('');
-
-  useEffect(() => {
-    if (!open) return;
-    setStatus('P');
-    setDate('');
-    setArea('');
-    setCustom(false);
-    setActivity('');
-  }, [open]);
-
-  const areas = useMemo(() => {
-    const m = new Map();
-    curriculum.forEach((c) => {
-      const label = (c.curriculum_areas?.name || c.area || '').trim() || 'General';
-      m.set(label.toLowerCase(), label);
-    });
-    if (!m.has('general')) m.set('general', 'General');
-    return Array.from(m.values()).sort((a, b) => a.localeCompare(b));
-  }, [curriculum]);
-
-  const officialActivities = useMemo(() => {
-    const list = curriculum
-      .map((c) => {
-        const areaLabel = (c.curriculum_areas?.name || c.area || '').trim() || 'General';
-        const name = (c.activity || c.name || '').trim();
-        return { id: c.id, name, areaLabel, areaId: c.curriculum_area_id || c.area_id || null };
-      })
-      .filter((x) => x.name);
-
-    if (!area) return list;
-    return list.filter((x) => x.areaLabel.toLowerCase() === area.toLowerCase());
-  }, [curriculum, area]);
-
-  if (!open) return null;
-
-  const handleSubmit = async () => {
-    if (!defaultStudentId) return;
-    const v = (activity || '').trim();
-    if (!v) return;
-
-    let selected = null;
-    if (!custom) {
-      selected = officialActivities.find((x) => x.name.toLowerCase() === v.toLowerCase()) || null;
-    }
-
-    const chosenStatus = status || 'P';
-    const finalDate =
-      (date || '').trim()
-        ? date
-        : (chosenStatus === 'A' ? nextMonthFirstISO : currentMonthFirstISO);
-
-    await onSubmit?.({
-      student_id: defaultStudentId,
-      status: chosenStatus,
-      date: finalDate,
-      activity: custom ? v : (selected?.name || v),
-      curriculum_activity_id: custom ? null : (selected?.id || null),
-      curriculum_area_id: selected?.areaId || null
-    });
-
-    onClose?.();
-  };
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.22)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999,
-        padding: 16
-      }}
-      onClick={onClose}
-    >
-      <div style={{ width: 'min(520px, 100%)' }} onClick={(e) => e.stopPropagation()}>
-        <Card style={{ padding: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
-            <div style={{ fontWeight: 900, suggestFontSize: 15, color: THEME.text }}>Add</div>
-            <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontWeight: 900 }}>
-              ✕
-            </button>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div>
-              <div style={labelStyle}>Status</div>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
-                <option value="P">To Present</option>
-                <option value="W">Practicing</option>
-                <option value="M">Mastered</option>
-                <option value="A">Aim (A)</option>
-              </select>
-            </div>
-            <div>
-              <div style={labelStyle}>Optional date</div>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle()} />
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <div style={labelStyle}>Area</div>
-            <select value={area} onChange={(e) => setArea(e.target.value)} style={selectStyle}>
-              <option value="">Any</option>
-              {areas.map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <div style={{ ...labelStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Activity</span>
-              <label style={{ fontSize: 12, fontWeight: 800, color: THEME.textMuted, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="checkbox" checked={custom} onChange={(e) => setCustom(e.target.checked)} />
-                Custom
-              </label>
-            </div>
-
-            {!custom ? (
-              <>
-                <input
-                  list="qaOfficialStudent"
-                  value={activity}
-                  onChange={(e) => setActivity(e.target.value)}
-                  placeholder="Pick an official activity…"
-                  style={{ width: '100%', padding: '12px 12px', border: '1px solid #eee', fontWeight: 800 }}
-                />
-                <datalist id="qaOfficialStudent">
-                  {officialActivities.slice(0, 250).map((a) => (
-                    <option key={a.id} value={a.name} />
-                  ))}
-                </datalist>
-              </>
-            ) : (
-              <input
-                value={activity}
-                onChange={(e) => setActivity(e.target.value)}
-                placeholder="Type custom activity…"
-                style={{ width: '100%', padding: '12px 12px', border: '1px solid #eee', fontWeight: 800 }}
-              />
-            )}
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button variant="secondary" onClick={handleSubmit}>Add</Button>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-const labelStyle = { fontSize: 12, fontWeight: 900, color: THEME.textMuted, marginBottom: 6 };
-const selectStyle = { ...inputStyle(), padding: '10px 12px', fontWeight: 900 };
