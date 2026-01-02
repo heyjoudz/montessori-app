@@ -3,12 +3,10 @@ import { THEME, getStatusStyle, getSubjectStyle } from '../../ui/theme';
 import { getNormalizedItem, formatStudentName, safeDate } from '../../utils/helpers';
 import Card from '../ui/Card';
 
-// Helper to lighten/tint colors for the category layer
+// Helper to lighten/tint colors
 const getTint = (color, opacity = 0.12) => {
   if (!color) return '#f9f9f9';
-  // simple hex check, otherwise return default
   if (color.startsWith('#')) {
-      // rough hex to rgba
       let c = color.substring(1);
       if (c.length === 3) c = c.split('').map(x=>x+x).join('');
       const r = parseInt(c.substr(0,2),16);
@@ -16,7 +14,7 @@ const getTint = (color, opacity = 0.12) => {
       const b = parseInt(c.substr(4,2),16);
       return `rgba(${r},${g},${b},${opacity})`;
   }
-  return '#f9f9f9'; // fallback
+  return '#f9f9f9';
 };
 
 function GroupHeader({ label, count, color, open, onToggle, variant = 'primary' }) {
@@ -29,7 +27,6 @@ function GroupHeader({ label, count, color, open, onToggle, variant = 'primary' 
         cursor: 'pointer',
         padding: isSecondary ? '8px 10px' : '10px 12px',
         border: '1px solid rgba(0,0,0,0.06)',
-        // Use tint for secondary (Category), White for primary (Area/Class)
         background: isSecondary ? getTint(color, 0.08) : '#fff', 
         display: 'flex',
         justifyContent: 'space-between',
@@ -55,47 +52,7 @@ function GroupHeader({ label, count, color, open, onToggle, variant = 'primary' 
   );
 }
 
-// Chip for a single item (Single Student View)
-function ItemChip({ label, subLabel, onClick, onDelete }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 8,
-        border: '1px solid rgba(0,0,0,0.06)',
-        background: '#fff',
-        padding: '8px 10px',
-        cursor: 'pointer',
-        borderRadius: 8,
-        marginBottom: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-      }}
-      onClick={onClick}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <span style={{ fontWeight: 650, fontSize: 12, color: THEME.text }}>{label}</span>
-        {subLabel && <span style={{ fontSize: 10.5, color: THEME.textMuted, marginTop: 2 }}>{subLabel}</span>}
-      </div>
-      
-      {onDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontWeight: 900, color: '#e57373', fontSize: 16, lineHeight:0.5 }}
-          title="Delete"
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
-
-// Chip for a Student (Dashboard View)
+// Chip for a Student (Dashboard View) - Unchanged
 function StudentChip({ label, count = 1, onClick, onDelete }) {
   return (
     <div
@@ -194,8 +151,6 @@ export default function KanbanColumn({
     setOpenMap((prev) => ({ ...prev, __ALL__: expandAction.type === 'EXPAND' }));
   }, [expandAction?.ts]);
 
-  // Helper to get open state. 
-  // 'overrideDefault' lets us force collapsed by default even if Expand All hasn't been clicked
   const isOpen = (key, defaultOpen = false) => {
     if (openMap[key] !== undefined) return !!openMap[key];
     if (openMap.__ALL__ !== undefined) return !!openMap.__ALL__;
@@ -205,6 +160,7 @@ export default function KanbanColumn({
   const toggle = (key) => setOpenMap((p) => ({ ...p, [key]: !isOpen(key) }));
 
   // --- 1. DASHBOARD TREE (Multi Student) ---
+  // Keeps Area -> Category -> Sub Activity Grouping
   const dashboardTree = useMemo(() => {
     if (mode === 'SINGLE_STUDENT') return null;
 
@@ -235,13 +191,12 @@ export default function KanbanColumn({
       const catLabel = (it.curriculum_categories?.name || it.category || 'Uncategorized').trim();
       const catKey = normKey(catLabel);
       
-      // We group by Activity Name -> Sub Label
       const activityLabel = (norm.title || it.activity || 'Activity').trim() || 'Activity';
       const actKey = normKey(activityLabel);
       
       const subLabel = (norm.rawActivity || it.raw_activity || '').trim();
       const subKey = subLabel ? normKey(subLabel) : '__nosub__';
-      const displaySubLabel = subLabel || activityLabel; // If no sub, use activity name as the item name
+      const displaySubLabel = subLabel || activityLabel;
 
       const classNode = getClassNode(it.classroom_id);
       classNode.count += 1;
@@ -252,8 +207,6 @@ export default function KanbanColumn({
       const catNode = ensure(areaNode.categories, catKey, () => ({ key: catKey, label: catLabel, subs: new Map(), count: 0 }));
       catNode.count += 1;
 
-      // Flattened: Category -> SubActivities (Grouped by name)
-      // This key needs to be unique per category
       const uniqueSubKey = `${actKey}_${subKey}`;
       const subNode = ensure(catNode.subs, uniqueSubKey, () => ({ 
           key: uniqueSubKey, 
@@ -291,7 +244,7 @@ export default function KanbanColumn({
     return { useClassGrouping, classNodes };
   }, [items, mode, selectedClassroomId, classById, studentById]);
 
-  // --- 2. SINGLE STUDENT TREE (Area -> Category -> Items) ---
+  // --- 2. SINGLE STUDENT TREE (Area -> Items) [FLATTENED] ---
   const singleStudentTree = useMemo(() => {
     if (mode !== 'SINGLE_STUDENT') return null;
 
@@ -307,32 +260,24 @@ export default function KanbanColumn({
         const areaLabel = (norm.area || 'General').trim() || 'General';
         const areaKey = normKey(areaLabel);
         
-        const catLabel = (it.curriculum_categories?.name || it.category || 'Uncategorized').trim();
-        const catKey = normKey(catLabel);
-
-        const areaNode = ensure(root, areaKey, () => ({ key: areaKey, label: areaLabel, categories: new Map(), count: 0 }));
+        // We skip Category grouping here as requested
+        const areaNode = ensure(root, areaKey, () => ({ key: areaKey, label: areaLabel, items: [], count: 0 }));
         areaNode.count++;
-
-        const catNode = ensure(areaNode.categories, catKey, () => ({ key: catKey, label: catLabel, items: [], count: 0 }));
-        catNode.count++;
         
-        catNode.items.push(it);
+        areaNode.items.push(it);
     });
 
     const toSorted = (map, sorter) => Array.from(map.values()).sort(sorter);
     
     const areaNodes = toSorted(root, (a,b) => a.label.localeCompare(b.label));
     areaNodes.forEach(a => {
-        a.categoriesArr = toSorted(a.categories, (x,y) => x.label.localeCompare(y.label));
-        a.categoriesArr.forEach(c => {
-             // Sort items alphabetically
-             c.items.sort((x, y) => {
-                 const nx = getNormalizedItem(x);
-                 const ny = getNormalizedItem(y);
-                 const tx = nx.rawActivity || nx.title || '';
-                 const ty = ny.rawActivity || ny.title || '';
-                 return tx.localeCompare(ty);
-             });
+        // Sort items alphabetically by SubActivity (raw) or Title
+        a.items.sort((x, y) => {
+            const nx = getNormalizedItem(x);
+            const ny = getNormalizedItem(y);
+            const tx = nx.rawActivity || nx.title || '';
+            const ty = ny.rawActivity || ny.title || '';
+            return tx.localeCompare(ty);
         });
     });
 
@@ -430,7 +375,7 @@ export default function KanbanColumn({
                                     <GroupHeader 
                                       label={cat.label} 
                                       count={cat.count} 
-                                      color={subj.border} // Same color family
+                                      color={subj.border} 
                                       open={openCat} 
                                       onToggle={() => toggle(catKey)} 
                                       variant="secondary"
@@ -440,9 +385,7 @@ export default function KanbanColumn({
                                       <div style={{ paddingLeft: 8, display: 'grid', gap: 8 }}>
                                         {cat.subsArr.map((sub) => {
                                             const subKey = `sub:${safeStatus}:${cls.key}:${area.key}:${cat.key}:${sub.key}`;
-                                            // STUDENTS COLLAPSED BY DEFAULT HERE
-                                            // Check specific key, default to FALSE unless __ALL__ forced true
-                                            const openSub = isOpen(subKey, false); 
+                                            const openSub = isOpen(subKey, false); // Students collapsed by default
                                             const studentCount = sub.studentsArr.length;
 
                                             return (
@@ -468,7 +411,7 @@ export default function KanbanColumn({
                                                       </div>
                                                     </div>
 
-                                                    {/* Student List - Only show if expanded */}
+                                                    {/* Student List */}
                                                     {openSub && (
                                                       <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                                           {sub.studentsArr.map(s => (
@@ -501,11 +444,12 @@ export default function KanbanColumn({
             );
           })}
         
-        {/* --- SINGLE STUDENT VIEW (Area -> Category -> Items) --- */}
+        {/* --- SINGLE STUDENT VIEW (Area -> Items) [FLATTENED & BULLETS] --- */}
         {mode === 'SINGLE_STUDENT' && singleStudentTree?.map(area => {
              const subj = getSubjectStyle(area.label);
              const areaKey = `ss:area:${safeStatus}:${area.key}`;
-             const openArea = isOpen(areaKey, true);
+             // Default to FALSE (Collapsed by default)
+             const openArea = isOpen(areaKey, false);
 
              return (
                 <div key={area.key} style={{ marginBottom: 12 }}>
@@ -519,40 +463,40 @@ export default function KanbanColumn({
                      />
                      
                     {openArea && (
-                        <div style={{ padding: '6px 0 0 6px', display: 'grid', gap: 8 }}>
-                            {area.categoriesArr.map(cat => {
-                                const catKey = `ss:cat:${safeStatus}:${area.key}:${cat.key}`;
-                                const openCat = isOpen(catKey, true);
-                                return (
-                                    <div key={cat.key}>
-                                        <GroupHeader 
-                                          label={cat.label} 
-                                          count={cat.count} 
-                                          color={subj.border} // Tint generated automatically
-                                          open={openCat} 
-                                          onToggle={() => toggle(catKey)} 
-                                          variant="secondary"
-                                        />
-                                        
-                                        {openCat && (
-                                            <div style={{ paddingLeft: 8 }}>
-                                                {cat.items.map(it => {
-                                                    const norm = getNormalizedItem(it);
-                                                    const displayName = norm.rawActivity || norm.title || 'Untitled';
-                                                    return (
-                                                        <ItemChip 
-                                                            key={it.id}
-                                                            label={displayName}
-                                                            onClick={() => onEditItem?.(it)}
-                                                            onDelete={() => onDeleteItem?.(it.id)}
-                                                        />
-                                                    )
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                )
-                            })}
+                        <div style={{ padding: '8px 4px', background: '#fff', borderLeft: `1px solid ${subj.border}`, marginLeft: 12 }}>
+                           {area.items.map(it => {
+                              const norm = getNormalizedItem(it);
+                              const displayName = norm.rawActivity || norm.title || 'Untitled';
+                              
+                              return (
+                                <div key={it.id} style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 8, paddingLeft: 8 }}>
+                                   <div style={{ color: THEME.brandPrimary, fontSize: 14, lineHeight: 1, marginRight: 8, marginTop: 2 }}>•</div>
+                                   <div style={{ flex: 1 }}>
+                                      <div 
+                                        onClick={() => onEditItem?.(it)}
+                                        style={{ 
+                                          cursor: 'pointer', 
+                                          fontSize: 13, 
+                                          fontWeight: 400, // Not bold
+                                          color: THEME.text,
+                                          lineHeight: 1.4
+                                        }}
+                                      >
+                                        {displayName}
+                                      </div>
+                                   </div>
+                                   {onDeleteItem && (
+                                     <button
+                                        onClick={(e) => { e.stopPropagation(); onDeleteItem(it.id); }}
+                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e57373', fontSize: 16, lineHeight: 1, padding: '0 4px', marginLeft: 4 }}
+                                        title="Delete"
+                                      >
+                                        ×
+                                      </button>
+                                   )}
+                                </div>
+                              )
+                           })}
                         </div>
                     )}
                 </div>

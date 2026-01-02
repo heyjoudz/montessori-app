@@ -576,7 +576,7 @@ export default function IndividualPlanner({
       />
 
       <div style={{ minWidth: 980 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             {!isParentLocked && (
               <Button variant="ghost" onClick={() => setSelectedId(null)} style={{ paddingLeft: 0, fontSize: 13 }}>← All Students</Button>
@@ -596,7 +596,7 @@ export default function IndividualPlanner({
           </div>
         </div>
 
-        <Card style={{ padding: 12, marginBottom: 14 }}>
+        <Card style={{ padding: 12, marginBottom: 24 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
             <TopStat label={`To Present — ${monthLabel(activeDateObj)}`} value={topStats.p} tone="P" />
             <TopStat label={`Practicing — ${monthLabel(activeDateObj)}`} value={topStats.w} tone="W" />
@@ -623,7 +623,7 @@ export default function IndividualPlanner({
 
         {tab === 'KANBAN' && (
           <div>
-            <Card style={{ padding: 14, marginBottom: 14 }}>
+            <Card style={{ padding: 14, marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                    <Button variant="ghost" onClick={() => setActiveDate(firstOfMonthISO(addMonths(activeDateObj, -1)))}>← Prev</Button>
