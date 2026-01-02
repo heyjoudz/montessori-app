@@ -5,7 +5,7 @@ import Card from '../components/ui/Card';
 import {
   Search, Plus, Save, X,
   School, Users, GraduationCap, BookOpen, Calendar,
-  ChevronRight, ChevronDown, Loader, Check, Info, Mail
+  ChevronRight, ChevronDown, Loader, Check, Info, Mail, Trash2
 } from 'lucide-react';
 
 // ---------- small color helpers (no deps) ----------
@@ -228,6 +228,36 @@ const TreeRow = ({
   </div>
 );
 
+// ---------- Success Toast Component ----------
+const SuccessToast = ({ show }) => (
+  <div
+    style={{
+      position: 'fixed',
+      bottom: show ? 30 : -100,
+      right: 30,
+      backgroundColor: UI.primary,
+      color: '#fff',
+      padding: '12px 24px',
+      borderRadius: 999,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      boxShadow: `0 10px 30px -5px ${rgba(UI.primary, 0.4)}`,
+      transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+      opacity: show ? 1 : 0,
+      zIndex: 9999,
+      fontWeight: 700,
+      fontSize: 14
+    }}
+  >
+    <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '50%', padding: 4, display: 'flex' }}>
+      <Check size={16} strokeWidth={3} />
+    </div>
+    Saved Successfully
+  </div>
+);
+
+
 // ---------- MAIN ----------
 export default function ConfigurationView({ isReadOnly }) {
   // ✅ allow everyone to edit for now (ignore isReadOnly)
@@ -236,6 +266,7 @@ export default function ConfigurationView({ isReadOnly }) {
   const [activeTab, setActiveTab] = useState('calendar');
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showToast, setShowToast] = useState(false); // <--- For popup
 
   // Data
   const [schools, setSchools] = useState([]);
@@ -254,6 +285,14 @@ export default function ConfigurationView({ isReadOnly }) {
   const [expandedNodes, setExpandedNodes] = useState({ YEAR_2025: true });
 
   useEffect(() => { fetchEverything(); }, []);
+
+  // Auto-hide toast
+  useEffect(() => {
+    if (showToast) {
+      const timer = setTimeout(() => setShowToast(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showToast]);
 
   const fetchEverything = async () => {
     setLoading(true);
@@ -301,11 +340,8 @@ export default function ConfigurationView({ isReadOnly }) {
     setEditingItem({ ...templates[activeTab], id: 'NEW' });
   };
 
-  const handleSave = async () => {
-    if (!editingItem) return;
-
-    setIsSaving(true);
-
+  // Maps active tab to table name
+  const getTableName = () => {
     const tableMap = {
       schools: 'schools',
       classrooms: 'classrooms',
@@ -314,11 +350,49 @@ export default function ConfigurationView({ isReadOnly }) {
       curriculum: 'curriculum_activities',
       calendar: 'term_plans'
     };
+    return tableMap[activeTab];
+  };
 
-    const table = tableMap[activeTab];
+  const handleDelete = async () => {
+    if (!editingItem || editingItem.id === 'NEW') return;
+    
+    // Simple confirmation
+    if (!window.confirm('Are you sure you want to delete this item? This cannot be undone.')) return;
+
+    setIsSaving(true);
+    const table = getTableName();
 
     try {
-      const { id, themes, ...payload } = editingItem;
+      const { error } = await supabase.from(table).delete().eq('id', editingItem.id);
+      if (error) throw error;
+
+      // Update Local State
+      const removeId = (prev) => prev.filter(i => i.id !== editingItem.id);
+      
+      if (activeTab === 'schools') setSchools(removeId);
+      if (activeTab === 'classrooms') setClassrooms(removeId);
+      if (activeTab === 'staff') setProfiles(removeId);
+      if (activeTab === 'students') setStudents(removeId);
+      if (activeTab === 'curriculum') setCurriculum(removeId);
+      if (activeTab === 'calendar') setTermPlans(removeId);
+
+      setEditingItem(null);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!editingItem) return;
+
+    setIsSaving(true);
+    const table = getTableName();
+
+    try {
+      // ⚠️ IMPORTANT: Remove full_name so we don't send it to the DB (it's auto-generated)
+      const { id, themes, full_name, ...payload } = editingItem;
       let result;
 
       if (id === 'NEW') {
@@ -347,6 +421,7 @@ export default function ConfigurationView({ isReadOnly }) {
       }
 
       setEditingItem(prev => ({ ...result, themes: prev?.themes }));
+      setShowToast(true); // <--- Trigger the success popup
     } catch (err) {
       alert(err.message || String(err));
     } finally {
@@ -580,6 +655,9 @@ export default function ConfigurationView({ isReadOnly }) {
       }}
     >
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      
+      {/* Toast Notification */}
+      <SuccessToast show={showToast} />
 
       {/* LEFT NAV */}
       <Card style={{ width: 270, padding: '22px 0' }}>
@@ -604,7 +682,7 @@ export default function ConfigurationView({ isReadOnly }) {
           active={activeTab === 'curriculum'}
           label="Curriculum"
           icon={BookOpen}
-          onClick={() => { setActiveTab('curriculum'); setEditingItem(null); }}
+          onClick={() => { setActiveTab('curriculum'); setEditingItem(null); setSearchTerm(''); }}
         />
 
         <div style={{ height: 18 }} />
@@ -617,25 +695,25 @@ export default function ConfigurationView({ isReadOnly }) {
           active={activeTab === 'students'}
           label="Students"
           icon={GraduationCap}
-          onClick={() => { setActiveTab('students'); setEditingItem(null); }}
+          onClick={() => { setActiveTab('students'); setEditingItem(null); setSearchTerm(''); }}
         />
         <TabButton
           active={activeTab === 'staff'}
           label="Staff"
           icon={Users}
-          onClick={() => { setActiveTab('staff'); setEditingItem(null); }}
+          onClick={() => { setActiveTab('staff'); setEditingItem(null); setSearchTerm(''); }}
         />
         <TabButton
           active={activeTab === 'classrooms'}
           label="Classrooms"
           icon={BookOpen}
-          onClick={() => { setActiveTab('classrooms'); setEditingItem(null); }}
+          onClick={() => { setActiveTab('classrooms'); setEditingItem(null); setSearchTerm(''); }}
         />
         <TabButton
           active={activeTab === 'schools'}
           label="Schools"
           icon={School}
-          onClick={() => { setActiveTab('schools'); setEditingItem(null); }}
+          onClick={() => { setActiveTab('schools'); setEditingItem(null); setSearchTerm(''); }}
         />
       </Card>
 
@@ -986,16 +1064,46 @@ export default function ConfigurationView({ isReadOnly }) {
               )}
             </div>
 
-            {/* Save */}
+            {/* Footer: Delete & Save */}
             <div
               style={{
                 marginTop: 26,
                 paddingTop: 18,
                 borderTop: `1px solid ${rgba(UI.accent, 0.25)}`,
                 display: 'flex',
-                justifyContent: 'flex-end'
+                justifyContent: 'space-between',
+                alignItems: 'center'
               }}
             >
+              {/* DELETE BUTTON (Left) - Only if not new */}
+              <div>
+                {editingItem.id !== 'NEW' && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={isSaving}
+                    title="Delete this item"
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: '#d93025',
+                      border: `1px solid ${rgba('#d93025', 0.3)}`,
+                      padding: '10px 14px',
+                      borderRadius: 12,
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: isSaving ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                )}
+              </div>
+
+              {/* SAVE BUTTON (Right) */}
               <button
                 onClick={handleSave}
                 disabled={isSaving}
@@ -1041,6 +1149,7 @@ export default function ConfigurationView({ isReadOnly }) {
               </div>
 
               <div style={{ fontFamily: THEME.serifFont, fontSize: 22, fontWeight: 900, color: UI.text }}>
+                Configuration
               </div>
               <div style={{ marginTop: 8, fontSize: 13, color: UI.muted, fontWeight: 650 }}>
                 Click on the + button to add a new item.

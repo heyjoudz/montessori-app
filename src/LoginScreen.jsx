@@ -5,7 +5,11 @@ import { THEME, FontLoader } from './ui/theme';
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  
+  // ✅ Changed: Split fullName into two states
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -116,10 +120,16 @@ export default function LoginScreen() {
 
     try {
       if (isSignUp) {
+        // ✅ Changed: Sending first_name and last_name in metadata
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { full_name: fullName } }
+          options: { 
+            data: { 
+              first_name: firstName, 
+              last_name: lastName 
+            } 
+          }
         });
         if (error) throw error;
         alert('Check your email for the confirmation link!');
@@ -237,18 +247,34 @@ export default function LoginScreen() {
 
           <form onSubmit={handleAuth}>
             {isSignUp && (
-              <div style={{ marginBottom: SP.fieldGap }}>
-                <label style={labelBase}>Full name</label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                  style={inputBase}
-                  onFocus={focusIn}
-                  onBlur={focusOut}
-                  placeholder="e.g. Joud Chamoun"
-                />
+              // ✅ Changed: Split inputs side-by-side
+              <div style={{ display: 'flex', gap: 16, marginBottom: SP.fieldGap }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelBase}>First Name</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    required
+                    style={inputBase}
+                    onFocus={focusIn}
+                    onBlur={focusOut}
+                    placeholder="e.g. Joud"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelBase}>Last Name</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    required
+                    style={inputBase}
+                    onFocus={focusIn}
+                    onBlur={focusOut}
+                    placeholder="Chamoun"
+                  />
+                </div>
               </div>
             )}
 
