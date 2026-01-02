@@ -779,10 +779,7 @@ export default function DashboardView({
 
       {/* Suggestions: ALL areas on the SAME ROW (horizontal scroll, no wrap) */}
       <Card style={{ padding: 18, overflow: 'visible' }}>
-        <div style={{ fontWeight: 900, marginBottom: 10 }}>Suggested from Scope & Sequence — {monthLabel}</div>
-        <div style={{ fontSize: 10, color: THEME.textMuted, fontWeight: 700, marginBottom: 12 }}>
-          Grouped by Area → Category (month view)
-        </div>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>Suggested from Scope & Sequence - {monthLabel}</div>
 
         {!suggestedByArea.length ? (
           <div style={{ color: '#999', fontSize: 13, fontWeight: 600 }}>No suggestions.</div>
