@@ -226,7 +226,7 @@ function AddActivityModal({
   const categoryOptions = useMemo(() => {
     const all = (currMeta?.categories || []).slice();
     const filtered = areaId ? all.filter((c) => String(c.area_id) === String(areaId)) : all;
-    return [{ value: '', label: '—' }, ...filtered.map((c) => ({ value: String(c.id), label: c.name }))];
+    return [{ value: '', label: '-' }, ...filtered.map((c) => ({ value: String(c.id), label: c.name }))];
   }, [currMeta, areaId]);
 
   const activityOptions = useMemo(() => {
@@ -315,7 +315,7 @@ function AddActivityModal({
           <div>
             <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Classroom</div>
             <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: '10px 12px', background: '#fff', fontWeight: 600, color: THEME.text }}>
-              {classroom?.name || '—'}
+              {classroom?.name || '-'}
             </div>
           </div>
 
@@ -779,7 +779,7 @@ export default function DashboardView({
 
       {/* Suggestions: ALL areas on the SAME ROW (horizontal scroll, no wrap) */}
       <Card style={{ padding: 18, overflow: 'visible' }}>
-        <div style={{ fontWeight: 900, marginBottom: 10 }}>Suggested from Scope & Sequence — {monthLabel}</div>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>Suggested from Scope & Sequence - {monthLabel}</div>
         <div style={{ fontSize: 10, color: THEME.textMuted, fontWeight: 700, marginBottom: 12 }}>
           Grouped by Area → Category (month view)
         </div>
@@ -977,3 +977,5 @@ style={{
     </div>
   );
 }
+
+
