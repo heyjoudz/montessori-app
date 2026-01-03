@@ -5,44 +5,68 @@ import Card from '../ui/Card';
 
 // Helper to lighten/tint colors
 const getTint = (color, opacity = 0.12) => {
-  if (!color) return '#f9f9f9';
-  if (color.startsWith('#')) {
-      let c = color.substring(1);
-      if (c.length === 3) c = c.split('').map(x=>x+x).join('');
-      const r = parseInt(c.substr(0,2),16);
-      const g = parseInt(c.substr(2,2),16);
-      const b = parseInt(c.substr(4,2),16);
-      return `rgba(${r},${g},${b},${opacity})`;
+  if (!color) return 'rgba(0,0,0,0.05)';
+  let c = color;
+  if (c.startsWith('#')) {
+    c = c.substring(1);
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const r = parseInt(c.substr(0, 2), 16);
+    const g = parseInt(c.substr(2, 2), 16);
+    const b = parseInt(c.substr(4, 2), 16);
+    return `rgba(${r},${g},${b},${opacity})`;
   }
-  return '#f9f9f9';
+  return color; // Fallback if not hex
 };
 
 function GroupHeader({ label, count, color, open, onToggle, variant = 'primary' }) {
   const isSecondary = variant === 'secondary';
-  
-  return (
-    <div
-      onClick={onToggle}
-      style={{
-        cursor: 'pointer',
-        padding: isSecondary ? '8px 10px' : '10px 12px',
-        border: '1px solid rgba(0,0,0,0.06)',
-        background: isSecondary ? getTint(color, 0.08) : '#fff', 
+  const displayColor = color || '#ccc';
+  const shadowColor = getTint(displayColor, 0.25); // Hard shadow color
+  const bgTint = getTint(displayColor, 0.04);
+
+  // --- NEW BOX STYLE ---
+  // Primary (Areas): Top Border + Hard Shadow + Sharp
+  // Secondary (Categories): Clean Box + Left Border Indicator + Sharp
+  const style = isSecondary
+    ? {
+        // Secondary Style (Category)
+        padding: '8px 10px',
+        border: '1px solid #eee',
+        borderLeft: `3px solid ${displayColor}`, // Keep a subtle left indicator for hierarchy
+        background: '#fff',
+        borderRadius: 4,
+        marginBottom: 8,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderLeft: `5px solid ${color || '#ccc'}`,
-        borderRadius: isSecondary ? 10 : 12,
-        marginBottom: isSecondary ? 8 : 0
-      }}
-    >
-      <div style={{ 
-          fontWeight: isSecondary ? 700 : 800, 
-          color: THEME.text, 
+        cursor: 'pointer'
+      }
+    : {
+        // Primary Style (Area) - Matches "Suggested" cards
+        padding: '10px 12px',
+        border: '1px solid #eee',
+        borderTop: `4px solid ${displayColor}`,
+        boxShadow: `3px 3px 0px 0px ${shadowColor}`,
+        background: '#fff',
+        borderRadius: 4,
+        marginBottom: 0, // Margin handled by container grid
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        cursor: 'pointer'
+      };
+
+  return (
+    <div onClick={onToggle} style={style}>
+      <div
+        style={{
+          fontWeight: isSecondary ? 700 : 850,
+          color: THEME.text,
           fontSize: isSecondary ? 11.5 : 12,
           textTransform: isSecondary ? 'none' : 'uppercase',
           letterSpacing: isSecondary ? 0 : 0.5
-      }}>
+        }}
+      >
         {label}
       </div>
       <div style={{ fontWeight: 800, color: THEME.textMuted, fontSize: 11 }}>
@@ -52,7 +76,7 @@ function GroupHeader({ label, count, color, open, onToggle, variant = 'primary' 
   );
 }
 
-// Chip for a Student (Dashboard View) - Unchanged
+// Chip for a Student (Dashboard View)
 function StudentChip({ label, count = 1, onClick, onDelete }) {
   return (
     <div
@@ -66,7 +90,7 @@ function StudentChip({ label, count = 1, onClick, onDelete }) {
         cursor: 'pointer',
         fontWeight: 600,
         fontSize: 11,
-        borderRadius: 6
+        borderRadius: 4 // Sharper radius
       }}
       onClick={onClick}
       title={count > 1 ? `${count} entries` : 'Open'}
@@ -160,7 +184,6 @@ export default function KanbanColumn({
   const toggle = (key) => setOpenMap((p) => ({ ...p, [key]: !isOpen(key) }));
 
   // --- 1. DASHBOARD TREE (Multi Student) ---
-  // Keeps Area -> Category -> Sub Activity Grouping
   const dashboardTree = useMemo(() => {
     if (mode === 'SINGLE_STUDENT') return null;
 
@@ -260,7 +283,6 @@ export default function KanbanColumn({
         const areaLabel = (norm.area || 'General').trim() || 'General';
         const areaKey = normKey(areaLabel);
         
-        // We skip Category grouping here as requested
         const areaNode = ensure(root, areaKey, () => ({ key: areaKey, label: areaLabel, items: [], count: 0 }));
         areaNode.count++;
         
@@ -271,7 +293,6 @@ export default function KanbanColumn({
     
     const areaNodes = toSorted(root, (a,b) => a.label.localeCompare(b.label));
     areaNodes.forEach(a => {
-        // Sort items alphabetically by SubActivity (raw) or Title
         a.items.sort((x, y) => {
             const nx = getNormalizedItem(x);
             const ny = getNormalizedItem(y);
@@ -293,6 +314,8 @@ export default function KanbanColumn({
       style={{
         padding: 0,
         overflow: 'hidden',
+        // Update: Ensure the main column card is also sharp to match
+        borderRadius: 8, 
         borderTop: `6px solid ${statusMeta?.accent || THEME.brandSecondary}`,
         background: statusMeta?.panelBg || '#fff'
       }}
@@ -331,7 +354,7 @@ export default function KanbanColumn({
 
       <div style={{ padding: 12 }}>
         {(items || []).length === 0 && (
-          <div style={{ padding: 12, border: '1px dashed #ddd', background: '#fff', color: '#999', fontWeight: 700, fontSize: 13 }}>
+          <div style={{ padding: 12, border: '1px dashed #ddd', background: '#fff', color: '#999', fontWeight: 700, fontSize: 13, borderRadius: 4 }}>
             No items.
           </div>
         )}
@@ -348,14 +371,14 @@ export default function KanbanColumn({
                   <GroupHeader label={cls.label || 'Unassigned'} count={cls.count} color={cls.color} open={openCls} onToggle={() => toggle(clsKey)} />
                 )}
                 {openCls && (
-                  <div style={{ paddingLeft: dashboardTree.useClassGrouping ? 10 : 0, display: 'grid', gap: 10, marginTop: 10 }}>
+                  <div style={{ paddingLeft: dashboardTree.useClassGrouping ? 10 : 0, display: 'grid', gap: 14, marginTop: 10 }}>
                     {cls.areasArr.map((area) => {
                       const subj = getSubjectStyle(area.label);
                       const areaKey = `area:${safeStatus}:${cls.key}:${area.key}`;
                       const openArea = isOpen(areaKey, false);
 
                       return (
-                        <div key={area.key} style={{ borderRadius: 14, overflow: 'hidden' }}>
+                        <div key={area.key} style={{ borderRadius: 4 }}>
                           <GroupHeader 
                             label={area.label} 
                             count={area.count} 
@@ -366,7 +389,7 @@ export default function KanbanColumn({
                           />
 
                           {openArea && (
-                            <div style={{ padding: '4px 0 0 8px', display: 'grid', gap: 8 }}>
+                            <div style={{ padding: '8px 0 0 0', display: 'grid', gap: 8 }}>
                               {area.categoriesArr.map((cat) => {
                                 const catKey = `cat:${safeStatus}:${cls.key}:${area.key}:${cat.key}`;
                                 const openCat = isOpen(catKey, true);
@@ -382,14 +405,14 @@ export default function KanbanColumn({
                                     />
                                     
                                     {openCat && (
-                                      <div style={{ paddingLeft: 8, display: 'grid', gap: 8 }}>
+                                      <div style={{ paddingLeft: 4, display: 'grid', gap: 8 }}>
                                         {cat.subsArr.map((sub) => {
                                             const subKey = `sub:${safeStatus}:${cls.key}:${area.key}:${cat.key}:${sub.key}`;
                                             const openSub = isOpen(subKey, false); // Students collapsed by default
                                             const studentCount = sub.studentsArr.length;
 
                                             return (
-                                                <div key={sub.key} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: '8px 10px', boxShadow:'0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div key={sub.key} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4, padding: '8px 10px', boxShadow:'0 1px 2px rgba(0,0,0,0.02)' }}>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                                                       <div>
                                                         <div style={{ fontWeight: 700, fontSize: 12, color: THEME.text, lineHeight: 1.3 }}>{sub.label}</div>
@@ -403,7 +426,7 @@ export default function KanbanColumn({
                                                           fontSize: 10, fontWeight: 800, 
                                                           color: openSub ? THEME.textMuted : THEME.brandPrimary,
                                                           background: openSub ? '#f5f5f5' : 'rgba(10,53,92,0.06)',
-                                                          padding: '2px 6px', borderRadius: 6, cursor: 'pointer',
+                                                          padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
                                                           whiteSpace: 'nowrap'
                                                         }}
                                                       >
@@ -448,7 +471,6 @@ export default function KanbanColumn({
         {mode === 'SINGLE_STUDENT' && singleStudentTree?.map(area => {
              const subj = getSubjectStyle(area.label);
              const areaKey = `ss:area:${safeStatus}:${area.key}`;
-             // Default to FALSE (Collapsed by default)
              const openArea = isOpen(areaKey, false);
 
              return (
@@ -460,8 +482,8 @@ export default function KanbanColumn({
                         open={openArea} 
                         onToggle={() => toggle(areaKey)} 
                         variant="primary"
-                     />
-                     
+                      />
+                      
                     {openArea && (
                         <div style={{ padding: '8px 4px', background: '#fff', borderLeft: `1px solid ${subj.border}`, marginLeft: 12 }}>
                            {area.items.map(it => {
@@ -475,14 +497,14 @@ export default function KanbanColumn({
                                       <div 
                                         onClick={() => onEditItem?.(it)}
                                         style={{ 
-                                          cursor: 'pointer', 
-                                          fontSize: 13, 
-                                          fontWeight: 400, // Not bold
-                                          color: THEME.text,
-                                          lineHeight: 1.4
+                                           cursor: 'pointer', 
+                                           fontSize: 13, 
+                                           fontWeight: 400,
+                                           color: THEME.text,
+                                           lineHeight: 1.4
                                         }}
                                       >
-                                        {displayName}
+                                         {displayName}
                                       </div>
                                    </div>
                                    {onDeleteItem && (

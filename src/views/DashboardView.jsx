@@ -753,8 +753,37 @@ export default function DashboardView({
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search activity, note, or student…" style={{ flex: 1, padding: 10, borderRadius: 12, border: '1px solid #ddd' }} />
-              <select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} style={{ padding: 10, borderRadius: 12, border: '1px solid #ddd' }}>
+              {/* UPDATED SEARCH INPUT STYLE */}
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search activity, note, or student…"
+                style={{
+                  flex: 1,
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #eee',
+                  background: '#fff',
+                  fontSize: 13,
+                  color: THEME.text,
+                  outline: 'none'
+                }}
+              />
+              {/* UPDATED SELECT DROPDOWN STYLE */}
+              <select
+                value={areaFilter}
+                onChange={(e) => setAreaFilter(e.target.value)}
+                style={{
+                  padding: '10px 36px 10px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #eee',
+                  background: '#fff',
+                  fontSize: 13,
+                  color: THEME.text,
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
                 {areaOptions.map((a) => (
                   <option key={a} value={a}>
                     {a === 'ALL' ? 'All Areas' : a}
@@ -777,143 +806,133 @@ export default function DashboardView({
         </div>
       </div>
 
-      {/* Suggestions: ALL areas on the SAME ROW (horizontal scroll, no wrap) */}
+      {/* Suggestions: Horizontal Cards per Area */}
       <Card style={{ padding: 18, overflow: 'visible' }}>
-        <div style={{ fontWeight: 900, marginBottom: 10 }}>Suggested from Scope & Sequence - {monthLabel}</div>
+        <div style={{ fontWeight: 900, marginBottom: 14 }}>Suggested from Scope & Sequence - {monthLabel}</div>
 
         {!suggestedByArea.length ? (
           <div style={{ color: '#999', fontSize: 13, fontWeight: 600 }}>No suggestions.</div>
         ) : (
-<div
-style={{
-    display: 'flex',
-    gap: 14,
-    flexWrap: 'nowrap',
-    overflowX: 'auto',
-    WebkitOverflowScrolling: 'touch',
-
-    // --- CRITICAL FIX: Prevent Stretching ---
-    // This ensures the cards sit at the top, and the padding-bottom
-    // acts as genuine empty space for the shadow to fall into.
-    alignItems: 'flex-start',
-
-    // --- FIX 1: Full Width alignment ---
-    marginLeft: -18,
-    marginRight: -18,
-
-    // --- FIX 2: Internal Spacing ---
-    paddingLeft: 18,
-    paddingRight: 18,
-
-    // --- FIX 3: The Shadow Cushion ---
-    // 40px of pure empty space for the shadow
-    paddingBottom: 40,
-
-    // --- FIX 4: Layout Correction ---
-    // Pull the next section up to hide the extra cushion space
-    marginBottom: -20,
-    
-    // --- FIX 5: Layering ---
-    position: 'relative',
-    zIndex: 10  }}
->
-{suggestedByArea.map((area) => {
-  const subjStyle = getSubjectStyle ? getSubjectStyle(area.subject) : { border: '#ccc', bg: '#fafafa', text: '#000' };
-  const open = isAreaOpen(area.subject);
-
-  return (
-    <div
-      key={area.subject}
-      style={{
-        flex: '0 0 280px',
-        minWidth: 280,
-        border: `1px solid ${subjStyle.border}`,
-        borderRadius: 18,
-        background: '#fff',
-        overflow: 'hidden',
-        boxShadow: '0 6px 18px rgba(10,53,92,0.05)'
-      }}
-    >
-      <div
-        onClick={() => toggleArea(area.subject)}
-        style={{
-          cursor: 'pointer',
-          padding: '10px 12px', // Reduced padding slightly
-          background: subjStyle.bg,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {/* --- CHANGE 1: Header Font Size (12 -> 11) --- */}
-          <div style={{ fontWeight: 950, color: subjStyle.text, fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {area.subject}
-          </div>
-          {/* --- CHANGE 2: Sub-header Font Size (11 -> 10) --- */}
-          <div style={{ fontSize: 10, color: THEME.textMuted, fontWeight: 800 }}>
-            {area.total} item(s)
-          </div>
-        </div>
-
-        <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textMuted }}>
-          {open ? '−' : '+'}
-        </div>
-      </div>
-
-      {open && (
-        <div style={{ padding: 12, background: '#fff' }}>
           <div
             style={{
-              maxHeight: 360,
-              overflow: 'auto',
-              paddingRight: 4,
-              display: 'grid',
-              gap: 10 // Reduced gap
+              display: 'flex',
+              gap: 16,
+              flexWrap: 'nowrap',
+              overflowX: 'auto',
+              WebkitOverflowScrolling: 'touch',
+              alignItems: 'flex-start',
+              marginLeft: -18,
+              marginRight: -18,
+              paddingLeft: 18,
+              paddingRight: 18,
+              paddingBottom: 40,
+              marginBottom: -20,
+              position: 'relative',
+              zIndex: 10
             }}
           >
-            {area.categories.map((c) => (
-              <div key={c.category} style={{ border: '1px solid rgba(0,0,0,0.06)', borderRadius: 14, padding: 10, background: '#fbfbfb' }}>
-                {c.category !== 'Uncategorized' && (
-                  /* --- CHANGE 3: Category Title Font Size (11 -> 10) --- */
-                  <div style={{ fontSize: 10, fontWeight: 950, color: THEME.text, marginBottom: 6 }}>
-                    {c.category}
-                  </div>
-                )}
+            {suggestedByArea.map((area) => {
+              const subjStyle = getSubjectStyle ? getSubjectStyle(area.subject) : { border: '#ccc', bg: '#fafafa', text: '#000' };
+              const open = isAreaOpen(area.subject);
 
-                {/* --- CHANGE 4: List Item Font Size (11 -> 10) --- */}
-                <ul style={{ margin: 0, paddingLeft: 16, color: THEME.textMuted, fontSize: 10, fontWeight: 750, display: 'grid', gap: 4 }}>
-                  {c.bullets.map((b, idx) => (
-                    <li key={`${c.category}-${idx}`} style={{ lineHeight: 1.25 }}>
-                      <span>{b.text}</span>
-                      {b.label ? (
-                        <span
-                          style={{
-                            marginLeft: 6,
-                            /* --- CHANGE 5: Label Font Size (9 -> 8.5) --- */
-                            fontSize: 8.5,
-                            fontWeight: 950,
-                            color: THEME.brandPrimary,
-                            background: 'rgba(10,53,92,0.06)',
-                            border: '1px solid rgba(10,53,92,0.10)',
-                            padding: '1px 5px',
-                            borderRadius: 999
-                          }}
-                        >
-                          {b.label}
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-})}
+              return (
+                <div
+                  key={area.subject}
+                  style={{
+                    flex: '0 0 300px', // Fixed width
+                    minWidth: 300,
+                    border: '1px solid #eee',
+                    borderTop: `4px solid ${subjStyle.border}`,
+                    boxShadow: `4px 4px 0px 0px ${subjStyle.border}40`,
+                    borderRadius: 4,
+                    background: '#fff',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  {/* Header */}
+                  <div
+                    onClick={() => toggleArea(area.subject)}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '12px 14px',
+                      background: '#fff',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderBottom: open ? `1px solid #f0f0f0` : 'none'
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ fontWeight: 800, color: subjStyle.text, fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                        {area.subject}
+                      </div>
+                      <div style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 700 }}>
+                        {area.total} item(s)
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 14, fontWeight: 900, color: THEME.textMuted }}>
+                      {open ? '−' : '+'}
+                    </div>
+                  </div>
+
+                  {/* Body */}
+                  {open && (
+                    <div style={{ padding: 12, background: '#fff' }}>
+                      <div
+                        style={{
+                          maxHeight: 400,
+                          overflowY: 'auto',
+                          paddingRight: 4,
+                          display: 'grid',
+                          gap: 12
+                        }}
+                      >
+                        {area.categories.map((c) => (
+                          <div key={c.category} style={{ border: '1px solid #f0f0f0', borderRadius: 4, padding: 12, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                            {c.category !== 'Uncategorized' && (
+                              <div style={{ fontSize: 12, fontWeight: 800, color: THEME.text, marginBottom: 8 }}>
+                                {c.category}
+                              </div>
+                            )}
+
+                            <ul style={{ margin: 0, paddingLeft: 18, color: THEME.text, fontSize: 12, fontWeight: 500, display: 'grid', gap: 6 }}>
+                              {c.bullets.map((b, idx) => (
+                                <li key={`${c.category}-${idx}`} style={{ lineHeight: 1.4 }}>
+                                  <div style={{ display: 'inline' }}>
+                                    {b.text}
+                                    {b.label ? (
+                                      <span
+                                        style={{
+                                          marginLeft: 6,
+                                          fontSize: 10,
+                                          fontWeight: 700,
+                                          color: THEME.textMuted,
+                                          background: '#f1f3f5',
+                                          border: '1px solid #e9ecef',
+                                          padding: '2px 6px',
+                                          borderRadius: 4,
+                                          display: 'inline-block',
+                                          verticalAlign: 'middle'
+                                        }}
+                                      >
+                                        {b.label}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>

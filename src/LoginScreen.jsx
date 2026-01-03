@@ -1,14 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { THEME, FontLoader } from './ui/theme';
+
+// Mock list of schools - eventually this will come from your database
+const SCHOOLS = [
+  { id: 'montessori-beirut', name: 'Montessori Beirut' },
+  { id: 'sunshine-academy', name: 'Sunshine Academy' },
+  { id: 'little-steps', name: 'Little Steps Montessori' }
+];
+
+const ROLES = [
+  { value: 'parent', label: 'Parent' },
+  { value: 'teacher', label: 'Teacher' },
+  { value: 'admin', label: 'School Admin' }
+];
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
-  // ✅ Changed: Split fullName into two states
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  
+  // ✅ New States for Role and School
+  const [selectedRole, setSelectedRole] = useState('parent'); 
+  const [selectedSchool, setSelectedSchool] = useState('');
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -51,23 +67,18 @@ export default function LoginScreen() {
     bg: THEME.bg,
     text: THEME.text,
     muted: THEME.textMuted,
-
-    primary: THEME.brandPrimary,      // navy (for text)
-    secondary: THEME.brandSecondary,  // peach
-    accent: THEME.brandAccent,        // teal
+    primary: THEME.brandPrimary,
+    secondary: THEME.brandSecondary,
+    accent: THEME.brandAccent,
     yellow: THEME.brandYellow,
-
     line: rgba(THEME.brandAccent, 0.55),
     soft: rgba(THEME.brandAccent, 0.22),
     soft2: rgba(THEME.brandSecondary, 0.14),
-
-    // CTA colors
     ctaBg: THEME.brandAccent,
     ctaBgHover: mixHex(THEME.brandAccent, THEME.brandPrimary, 0.18),
     ctaText: THEME.brandPrimary,
   };
 
-  // --- “spacier” layout knobs ---
   const SP = {
     cardPad: 36,
     fieldGap: 20,
@@ -91,10 +102,21 @@ export default function LoginScreen() {
     transition: 'box-shadow 0.15s, border-color 0.15s',
   };
 
+  // Same style for Select elements
+  const selectBase = {
+    ...inputBase,
+    appearance: 'none', // removes default arrow in some browsers
+    backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23${UI.primary.replace('#', '')}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'right 16px center',
+    backgroundSize: '16px',
+    cursor: 'pointer'
+  };
+
   const labelBase = {
     display: 'block',
     fontSize: 11,
-    fontWeight: 500, // lighter
+    fontWeight: 500,
     color: UI.muted,
     marginBottom: 8,
     textTransform: 'uppercase',
@@ -115,24 +137,33 @@ export default function LoginScreen() {
     e.preventDefault();
     if (loading) return;
 
+    // Basic Validation for Sign Up
+    if (isSignUp && (!selectedSchool || !selectedRole)) {
+      setError("Please select a school and a role.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
       if (isSignUp) {
-        // ✅ Changed: Sending first_name and last_name in metadata
+        // ✅ Changed: Sending role, school, and 'pending' status
         const { error } = await supabase.auth.signUp({
           email,
           password,
           options: { 
             data: { 
               first_name: firstName, 
-              last_name: lastName 
+              last_name: lastName,
+              role: selectedRole,
+              school_id: selectedSchool,
+              status: 'pending' // Default status is pending approval
             } 
           }
         });
         if (error) throw error;
-        alert('Check your email for the confirmation link!');
+        alert('Account created! Your access is currently pending administrator approval.');
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -176,7 +207,7 @@ export default function LoginScreen() {
           <div
             style={{
               fontFamily: THEME.serifFont,
-              fontWeight: 600, // lighter
+              fontWeight: 600,
               fontSize: 28,
               letterSpacing: '-0.01em',
               lineHeight: 1.15,
@@ -219,7 +250,7 @@ export default function LoginScreen() {
                 color: UI.text,
                 borderRadius: 999,
                 padding: '12px 14px',
-                fontWeight: 500, // lighter
+                fontWeight: 500,
                 cursor: 'pointer',
                 fontFamily: THEME.sansFont
               }}
@@ -236,7 +267,7 @@ export default function LoginScreen() {
                 color: UI.text,
                 borderRadius: 999,
                 padding: '12px 14px',
-                fontWeight: 500, // lighter
+                fontWeight: 500,
                 cursor: 'pointer',
                 fontFamily: THEME.sansFont
               }}
@@ -247,35 +278,67 @@ export default function LoginScreen() {
 
           <form onSubmit={handleAuth}>
             {isSignUp && (
-              // ✅ Changed: Split inputs side-by-side
-              <div style={{ display: 'flex', gap: 16, marginBottom: SP.fieldGap }}>
-                <div style={{ flex: 1 }}>
-                  <label style={labelBase}>First Name</label>
-                  <input
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    required
-                    style={inputBase}
-                    onFocus={focusIn}
-                    onBlur={focusOut}
-                    placeholder="e.g. Joud"
-                  />
+              <>
+                {/* Names */}
+                <div style={{ display: 'flex', gap: 16, marginBottom: SP.fieldGap }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelBase}>First Name</label>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      required
+                      style={inputBase}
+                      onFocus={focusIn}
+                      onBlur={focusOut}
+                      placeholder="e.g. Joud"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelBase}>Last Name</label>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      required
+                      style={inputBase}
+                      onFocus={focusIn}
+                      onBlur={focusOut}
+                      placeholder="Chamoun"
+                    />
+                  </div>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={labelBase}>Last Name</label>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    required
-                    style={inputBase}
-                    onFocus={focusIn}
-                    onBlur={focusOut}
-                    placeholder="Chamoun"
-                  />
+
+                {/* Role & School Selection */}
+                <div style={{ display: 'flex', gap: 16, marginBottom: SP.fieldGap }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelBase}>I am a...</label>
+                    <select 
+                      value={selectedRole}
+                      onChange={(e) => setSelectedRole(e.target.value)}
+                      style={selectBase}
+                      onFocus={focusIn}
+                      onBlur={focusOut}
+                    >
+                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelBase}>School</label>
+                    <select 
+                      value={selectedSchool}
+                      onChange={(e) => setSelectedSchool(e.target.value)}
+                      style={selectBase}
+                      required
+                      onFocus={focusIn}
+                      onBlur={focusOut}
+                    >
+                      <option value="" disabled>Select...</option>
+                      {SCHOOLS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
             <div style={{ marginBottom: SP.fieldGap }}>
@@ -338,7 +401,7 @@ export default function LoginScreen() {
                 border: `1px solid ${rgba(UI.primary, 0.12)}`,
                 background: UI.ctaBg,
                 color: UI.ctaText,
-                fontWeight: 600, // lighter than before
+                fontWeight: 600,
                 fontSize: 15,
                 cursor: loading ? 'not-allowed' : 'pointer',
                 boxShadow: `8px 8px 0px 0px ${UI.accent}`,
@@ -370,7 +433,7 @@ export default function LoginScreen() {
                   Processing…
                 </>
               ) : (
-                isSignUp ? 'Create account' : 'Sign in'
+                isSignUp ? 'Request Access' : 'Sign in'
               )}
             </button>
 
@@ -383,7 +446,7 @@ export default function LoginScreen() {
                   border: 'none',
                   color: UI.primary,
                   cursor: 'pointer',
-                  fontWeight: 450, // lighter
+                  fontWeight: 450,
                   fontSize: 13.5,
                   textDecoration: 'underline',
                   textUnderlineOffset: 4,

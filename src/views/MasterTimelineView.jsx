@@ -291,16 +291,17 @@ export default function MasterTimelineView({
     setInlineAddForm({ category: 'Uncategorized', raw_activity: '', session_label: '', teacher_notes: '' });
   };
 
+  // ✅ FIXED: Maps "Teacher Notes" input to "raw_activity" DB column.
+  // ✅ FIXED: Removed "category" from payload to avoid DB error.
   const saveInlineAdd = async () => {
     if (!inlineAddLocation) return;
     try {
       await insertSession({
         plan_id: inlineAddLocation.planId,
-        area: inlineAddLocation.area,
-        category: inlineAddLocation.category || 'Uncategorized',
-        raw_activity: inlineAddLocation.raw_activity,
-        session_label: inlineAddLocation.session_label,
-        teacher_notes: inlineAddLocation.teacher_notes,
+        area: inlineAddLocation.area, // This saves "Math" to your new text column
+        // We prioritize the notes input, but fall back to activity input if needed
+        raw_activity: inlineAddForm.teacher_notes || inlineAddForm.raw_activity, 
+        session_label: inlineAddForm.session_label,
       });
       toastOk('Added', 'Session added inline.');
       setInlineAddLocation(null);
@@ -316,18 +317,18 @@ export default function MasterTimelineView({
       category: session.category || session.curriculum_categories?.name || 'Uncategorized',
       raw_activity: session.raw_activity || session.curriculum_activities?.name || '',
       session_label: session.session_label || '',
-      teacher_notes: session.teacher_notes || session.notes || '',
+      teacher_notes: session.teacher_notes || session.notes || session.raw_activity || '',
     });
   };
 
+  // ✅ FIXED: Maps "Teacher Notes" input to "raw_activity" DB column.
+  // ✅ FIXED: Removed "category" from payload to avoid DB error.
   const saveInlineEditSession = async () => {
     if (!editingSessionId) return;
     try {
       await updateSession(editingSessionId, {
-        category: editingSessionForm.category,
-        raw_activity: editingSessionForm.raw_activity,
+        raw_activity: editingSessionForm.teacher_notes || editingSessionForm.raw_activity,
         session_label: editingSessionForm.session_label,
-        teacher_notes: editingSessionForm.teacher_notes
       });
       toastOk('Updated', 'Session updated inline.');
       setEditingSessionId(null);
@@ -466,12 +467,12 @@ export default function MasterTimelineView({
     return Array.from(base).sort();
   }, [classSessionsAll]);
   const editActivityOptions = useMemo(() => {
-     const base = new Set();
-     classSessionsAll.forEach((s) => {
-         const r = (s.raw_activity||'').trim();
-         if(r) base.add(r);
-     });
-     return Array.from(base).sort();
+      const base = new Set();
+      classSessionsAll.forEach((s) => {
+          const r = (s.raw_activity||'').trim();
+          if(r) base.add(r);
+      });
+      return Array.from(base).sort();
   }, [classSessionsAll]);
 
   const ClassroomTabsUnderTitle = () => {
@@ -596,7 +597,7 @@ export default function MasterTimelineView({
                                 </div>
                             )}
 
-                             {/* ✅ NOTES: Removed explicit "Edit" button. Click text to edit. */}
+                             {/* NOTES */}
                              {inlineWeekEdit?.weekNum === weekObj.week && inlineWeekEdit?.field === 'notes' ? (
                                 <div style={{marginTop: 8, display:'flex', flexDirection:'column', gap:6}}>
                                     <textarea
@@ -678,193 +679,193 @@ export default function MasterTimelineView({
 
                                   {!areaCollapsed && (
                                     <div style={{ padding: 10, display: 'grid', gap: 10, minWidth: 0 }}>
-                                        {inlineAddLocation?.weekNum === weekObj.week && inlineAddLocation?.area === areaName && (
-                                            <div style={{
-                                                padding: 12, border: `2px dashed ${subj.border}`, borderRadius: 8, background: '#fdfdfd', display:'grid', gap:8
-                                            }}>
-                                                <div style={{fontSize:11, fontWeight:900, color: THEME.textMuted}}>NEW SESSION ({areaName})</div>
-                                                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-                                                    <select
-                                                        value={inlineAddForm.category}
-                                                        onChange={e => setInlineAddForm({...inlineAddForm, category: e.target.value})}
-                                                        style={selectStyle()}
-                                                    >
-                                                        {editCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                                                    </select>
+                                            {inlineAddLocation?.weekNum === weekObj.week && inlineAddLocation?.area === areaName && (
+                                                <div style={{
+                                                    padding: 12, border: `2px dashed ${subj.border}`, borderRadius: 8, background: '#fdfdfd', display:'grid', gap:8
+                                                }}>
+                                                    <div style={{fontSize:11, fontWeight:900, color: THEME.textMuted}}>NEW SESSION ({areaName})</div>
+                                                    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+                                                        <select
+                                                            value={inlineAddForm.category}
+                                                            onChange={e => setInlineAddForm({...inlineAddForm, category: e.target.value})}
+                                                            style={selectStyle()}
+                                                        >
+                                                            {editCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                                        </select>
+                                                        <input
+                                                            placeholder="Session Label (e.g. S1)"
+                                                            value={inlineAddForm.session_label}
+                                                            onChange={e => setInlineAddForm({...inlineAddForm, session_label: e.target.value})}
+                                                            style={inputStyle()}
+                                                        />
+                                                    </div>
                                                     <input
-                                                        placeholder="Session Label (e.g. S1)"
-                                                        value={inlineAddForm.session_label}
-                                                        onChange={e => setInlineAddForm({...inlineAddForm, session_label: e.target.value})}
+                                                        placeholder="Activity (Raw text)"
+                                                        value={inlineAddForm.raw_activity}
+                                                        onChange={e => setInlineAddForm({...inlineAddForm, raw_activity: e.target.value})}
+                                                        style={inputStyle()}
+                                                        list={`add-act-list-${weekObj.week}`}
+                                                    />
+                                                    <datalist id={`add-act-list-${weekObj.week}`}>
+                                                        {editActivityOptions.slice(0,100).map(o => <option key={o} value={o}/>)}
+                                                    </datalist>
+                                                    <input
+                                                        placeholder="Teacher Notes / Description"
+                                                        value={inlineAddForm.teacher_notes}
+                                                        onChange={e => setInlineAddForm({...inlineAddForm, teacher_notes: e.target.value})}
                                                         style={inputStyle()}
                                                     />
+                                                    <div style={{display:'flex', gap:8, marginTop:4}}>
+                                                        <Button onClick={saveInlineAdd} style={{padding:'6px 12px'}}>Add</Button>
+                                                        <Button variant="ghost" onClick={() => setInlineAddLocation(null)} style={{padding:'6px 12px'}}>Cancel</Button>
+                                                    </div>
                                                 </div>
-                                                <input
-                                                    placeholder="Activity (Raw text)"
-                                                    value={inlineAddForm.raw_activity}
-                                                    onChange={e => setInlineAddForm({...inlineAddForm, raw_activity: e.target.value})}
-                                                    style={inputStyle()}
-                                                    list={`add-act-list-${weekObj.week}`}
-                                                />
-                                                <datalist id={`add-act-list-${weekObj.week}`}>
-                                                    {editActivityOptions.slice(0,100).map(o => <option key={o} value={o}/>)}
-                                                </datalist>
-                                                <input
-                                                    placeholder="Teacher Notes / Description"
-                                                    value={inlineAddForm.teacher_notes}
-                                                    onChange={e => setInlineAddForm({...inlineAddForm, teacher_notes: e.target.value})}
-                                                    style={inputStyle()}
-                                                />
-                                                <div style={{display:'flex', gap:8, marginTop:4}}>
-                                                    <Button onClick={saveInlineAdd} style={{padding:'6px 12px'}}>Add</Button>
-                                                    <Button variant="ghost" onClick={() => setInlineAddLocation(null)} style={{padding:'6px 12px'}}>Cancel</Button>
-                                                </div>
-                                            </div>
-                                        )}
+                                            )}
 
-                                      {catNames.length === 0 && !inlineAddLocation && (
-                                          <div style={{fontSize:12, color:'#ccc', fontStyle:'italic', padding:4}}>No sessions yet. Click + above to add.</div>
-                                      )}
+                                          {catNames.length === 0 && !inlineAddLocation && (
+                                              <div style={{fontSize:12, color:'#ccc', fontStyle:'italic', padding:4}}>No sessions yet. Click + above to add.</div>
+                                          )}
 
-                                      {catNames.map((catName) => {
-                                        const catCollapsed = !!collapsedCatsByWeek[weekObj.week]?.[`${areaName}||${catName}`];
-                                        const isUncat = String(catName || '').toLowerCase() === 'uncategorized';
-                                        const payload = catObj[catName] || { __uncat: null, __acts: {} };
+                                          {catNames.map((catName) => {
+                                            const catCollapsed = !!collapsedCatsByWeek[weekObj.week]?.[`${areaName}||${catName}`];
+                                            const isUncat = String(catName || '').toLowerCase() === 'uncategorized';
+                                            const payload = catObj[catName] || { __uncat: null, __acts: {} };
 
-                                        const renderSessionRow = (group) => {
-                                            const firstSession = group.sessions[0];
-                                            const isEditing = editingSessionId === firstSession.id;
+                                            const renderSessionRow = (group) => {
+                                                const firstSession = group.sessions[0];
+                                                const isEditing = editingSessionId === firstSession.id;
 
-                                            if (isEditing) {
-                                                return (
-                                                    <div style={{
-                                                        marginTop: 4, padding: 8, border: '1px solid #ddd', background: '#fff', borderRadius: 6,
-                                                        display: 'grid', gap: 6
-                                                    }}>
-                                                        <div style={{display:'flex', justifyContent:'space-between'}}>
-                                                            <span style={{fontSize:10, fontWeight:900, color:'#999'}}>EDITING</span>
-                                                            <Button variant="ghost" style={{color:'#d32f2f', padding:0, height:'auto', fontSize:10}} onClick={() => deleteSession(firstSession.id).then(() => {setEditingSessionId(null); refresh();})}>Delete</Button>
-                                                        </div>
-                                                        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:6}}>
-                                                            <select
-                                                                value={editingSessionForm.category}
-                                                                onChange={e => setEditingSessionForm({...editingSessionForm, category: e.target.value})}
-                                                                style={{...selectStyle(), fontSize:12, padding:4}}
-                                                            >
-                                                                {editCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                                                            </select>
+                                                if (isEditing) {
+                                                    return (
+                                                        <div style={{
+                                                            marginTop: 4, padding: 8, border: '1px solid #ddd', background: '#fff', borderRadius: 6,
+                                                            display: 'grid', gap: 6
+                                                        }}>
+                                                            <div style={{display:'flex', justifyContent:'space-between'}}>
+                                                                <span style={{fontSize:10, fontWeight:900, color:'#999'}}>EDITING</span>
+                                                                <Button variant="ghost" style={{color:'#d32f2f', padding:0, height:'auto', fontSize:10}} onClick={() => deleteSession(firstSession.id).then(() => {setEditingSessionId(null); refresh();})}>Delete</Button>
+                                                            </div>
+                                                            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:6}}>
+                                                                <select
+                                                                    value={editingSessionForm.category}
+                                                                    onChange={e => setEditingSessionForm({...editingSessionForm, category: e.target.value})}
+                                                                    style={{...selectStyle(), fontSize:12, padding:4}}
+                                                                >
+                                                                    {editCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                                                </select>
+                                                                <input
+                                                                    value={editingSessionForm.session_label}
+                                                                    onChange={e => setEditingSessionForm({...editingSessionForm, session_label: e.target.value})}
+                                                                    placeholder="Label"
+                                                                    style={{...inputStyle(), fontSize:12, padding:4}}
+                                                                />
+                                                            </div>
                                                             <input
-                                                                value={editingSessionForm.session_label}
-                                                                onChange={e => setEditingSessionForm({...editingSessionForm, session_label: e.target.value})}
-                                                                placeholder="Label"
+                                                                value={editingSessionForm.raw_activity}
+                                                                onChange={e => setEditingSessionForm({...editingSessionForm, raw_activity: e.target.value})}
+                                                                placeholder="Activity"
                                                                 style={{...inputStyle(), fontSize:12, padding:4}}
                                                             />
+                                                            <input
+                                                                value={editingSessionForm.teacher_notes}
+                                                                onChange={e => setEditingSessionForm({...editingSessionForm, teacher_notes: e.target.value})}
+                                                                placeholder="Notes"
+                                                                style={{...inputStyle(), fontSize:12, padding:4}}
+                                                            />
+                                                            <div style={{display:'flex', gap:6}}>
+                                                                <Button onClick={saveInlineEditSession} style={{fontSize:11, padding:'4px 8px'}}>Save</Button>
+                                                                <Button variant="ghost" onClick={() => setEditingSessionId(null)} style={{fontSize:11, padding:'4px 8px'}}>Cancel</Button>
+                                                            </div>
                                                         </div>
-                                                        <input
-                                                            value={editingSessionForm.raw_activity}
-                                                            onChange={e => setEditingSessionForm({...editingSessionForm, raw_activity: e.target.value})}
-                                                            placeholder="Activity"
-                                                            style={{...inputStyle(), fontSize:12, padding:4}}
-                                                        />
-                                                        <input
-                                                            value={editingSessionForm.teacher_notes}
-                                                            onChange={e => setEditingSessionForm({...editingSessionForm, teacher_notes: e.target.value})}
-                                                            placeholder="Notes"
-                                                            style={{...inputStyle(), fontSize:12, padding:4}}
-                                                        />
-                                                        <div style={{display:'flex', gap:6}}>
-                                                            <Button onClick={saveInlineEditSession} style={{fontSize:11, padding:'4px 8px'}}>Save</Button>
-                                                            <Button variant="ghost" onClick={() => setEditingSessionId(null)} style={{fontSize:11, padding:'4px 8px'}}>Cancel</Button>
+                                                    );
+                                                }
+
+                                                const tags = Array.from(group.tags.values()).filter(Boolean);
+                                                const tagStr = tags.join(', ');
+                                                const noteText = group.note;
+                                                const hasNote = noteText && noteText !== '__NO_NOTE__';
+
+                                                return (
+                                                    <div style={{display:'flex', alignItems:'flex-start', gap:6, group: 'parent'}}>
+                                                        <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 700, lineHeight: 1.35, flex:1 }}>
+                                                            {hasNote && tagStr ? (
+                                                                <>
+                                                                    <span style={{ color: THEME.text, fontWeight: 900 }}>{renderS1S2Italic(tagStr)}</span>
+                                                                    <span style={{ margin: '0 6px' }}>—</span>
+                                                                    <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
+                                                                </>
+                                                            ) : hasNote ? (
+                                                                <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
+                                                            ) : (
+                                                                <span style={{ color: THEME.text, fontWeight: 800 }}>{renderS1S2Italic(tagStr || '—')}</span>
+                                                            )}
                                                         </div>
+                                                        <span
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                startInlineEditSession(firstSession);
+                                                            }}
+                                                            style={{
+                                                                fontSize: 10, color: THEME.brandPrimary, cursor: 'pointer', textDecoration: 'underline', whiteSpace:'nowrap', opacity: 0.7
+                                                            }}
+                                                            onMouseEnter={e => e.target.style.opacity = 1}
+                                                            onMouseLeave={e => e.target.style.opacity = 0.7}
+                                                        >
+                                                            Edit
+                                                        </span>
                                                     </div>
                                                 );
-                                            }
-
-                                            const tags = Array.from(group.tags.values()).filter(Boolean);
-                                            const tagStr = tags.join(', ');
-                                            const noteText = group.note;
-                                            const hasNote = noteText && noteText !== '__NO_NOTE__';
+                                            };
 
                                             return (
-                                                <div style={{display:'flex', alignItems:'flex-start', gap:6, group: 'parent'}}>
-                                                    <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 700, lineHeight: 1.35, flex:1 }}>
-                                                        {hasNote && tagStr ? (
-                                                            <>
-                                                                <span style={{ color: THEME.text, fontWeight: 900 }}>{renderS1S2Italic(tagStr)}</span>
-                                                                <span style={{ margin: '0 6px' }}>—</span>
-                                                                <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
-                                                            </>
-                                                        ) : hasNote ? (
-                                                            <span style={{ color: THEME.textMuted, fontWeight: 800 }}>{noteText}</span>
-                                                        ) : (
-                                                            <span style={{ color: THEME.text, fontWeight: 800 }}>{renderS1S2Italic(tagStr || '—')}</span>
-                                                        )}
-                                                    </div>
-                                                    <span
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            startInlineEditSession(firstSession);
-                                                        }}
-                                                        style={{
-                                                            fontSize: 10, color: THEME.brandPrimary, cursor: 'pointer', textDecoration: 'underline', whiteSpace:'nowrap', opacity: 0.7
-                                                        }}
-                                                        onMouseEnter={e => e.target.style.opacity = 1}
-                                                        onMouseLeave={e => e.target.style.opacity = 0.7}
-                                                    >
-                                                        Edit
-                                                    </span>
+                                              <div key={catName} style={{ border: '1px solid #eee', background: '#fff', borderRadius: 12, overflow: 'hidden', minWidth: 0 }}>
+                                                <div
+                                                  onClick={() => toggleCat(weekObj.week, areaName, catName)}
+                                                  style={{ padding: '10px 12px', cursor: 'pointer', background: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}
+                                                >
+                                                  <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                                                    {catName}
+                                                  </div>
+                                                  <div style={{ fontWeight: 900, color: THEME.textMuted, fontSize: 12 }}>{catCollapsed ? '+' : '−'}</div>
                                                 </div>
-                                            );
-                                        };
 
-                                        return (
-                                          <div key={catName} style={{ border: '1px solid #eee', background: '#fff', borderRadius: 12, overflow: 'hidden', minWidth: 0 }}>
-                                            <div
-                                              onClick={() => toggleCat(weekObj.week, areaName, catName)}
-                                              style={{ padding: '10px 12px', cursor: 'pointer', background: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}
-                                            >
-                                              <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
-                                                {catName}
-                                              </div>
-                                              <div style={{ fontWeight: 900, color: THEME.textMuted, fontSize: 12 }}>{catCollapsed ? '+' : '−'}</div>
-                                            </div>
-
-                                            {!catCollapsed && (
-                                              <div style={{ padding: 10, display: 'grid', gap: 10, minWidth: 0 }}>
-                                                {isUncat ? (
-                                                  !payload.__uncat || payload.__uncat.size === 0 ? (
-                                                    <div style={{ fontSize: 12, color: '#999', fontWeight: 700, fontStyle: 'italic' }}>No notes yet.</div>
-                                                  ) : (
-                                                    <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 10 }}>
-                                                      {Array.from(payload.__uncat.entries()).map(([noteKey, group]) => (
-                                                        <li key={noteKey}>{renderSessionRow(group)}</li>
-                                                      ))}
-                                                    </ul>
-                                                  )
-                                                ) : (
-                                                  Object.keys(payload.__acts || {}).sort((a, b) => a.localeCompare(b)).map((actName) => {
-                                                    const act = payload.__acts[actName];
-                                                    const byNoteEntries = Array.from(act.byNote.entries());
-                                                    return (
-                                                      <div key={actName} style={{ border: '1px solid #eee', background: '#fff', padding: 10, borderRadius: 12, minWidth: 0 }}>
-                                                        <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text, minWidth: 0 }}>{actName}</div>
-                                                        {byNoteEntries.length > 0 ? (
-                                                            <ul style={{ margin: '10px 0 0 0', paddingLeft: 18, display: 'grid', gap: 10 }}>
-                                                                {byNoteEntries.map(([noteKey, group]) => (
-                                                                    <li key={noteKey}>{renderSessionRow(group)}</li>
-                                                                ))}
-                                                            </ul>
-                                                        ) : (
-                                                            <div style={{ marginTop: 8, fontSize: 12, color: '#999', fontWeight: 700, fontStyle: 'italic' }}>No notes yet.</div>
-                                                        )}
-                                                      </div>
-                                                    );
-                                                  })
+                                                {!catCollapsed && (
+                                                  <div style={{ padding: 10, display: 'grid', gap: 10, minWidth: 0 }}>
+                                                    {isUncat ? (
+                                                      !payload.__uncat || payload.__uncat.size === 0 ? (
+                                                        <div style={{ fontSize: 12, color: '#999', fontWeight: 700, fontStyle: 'italic' }}>No notes yet.</div>
+                                                      ) : (
+                                                        <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 10 }}>
+                                                          {Array.from(payload.__uncat.entries()).map(([noteKey, group]) => (
+                                                            <li key={noteKey}>{renderSessionRow(group)}</li>
+                                                          ))}
+                                                        </ul>
+                                                      )
+                                                    ) : (
+                                                      Object.keys(payload.__acts || {}).sort((a, b) => a.localeCompare(b)).map((actName) => {
+                                                        const act = payload.__acts[actName];
+                                                        const byNoteEntries = Array.from(act.byNote.entries());
+                                                        return (
+                                                          <div key={actName} style={{ border: '1px solid #eee', background: '#fff', padding: 10, borderRadius: 12, minWidth: 0 }}>
+                                                            <div style={{ fontWeight: 900, fontSize: 12, color: THEME.text, minWidth: 0 }}>{actName}</div>
+                                                            {byNoteEntries.length > 0 ? (
+                                                                <ul style={{ margin: '10px 0 0 0', paddingLeft: 18, display: 'grid', gap: 10 }}>
+                                                                    {byNoteEntries.map(([noteKey, group]) => (
+                                                                        <li key={noteKey}>{renderSessionRow(group)}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            ) : (
+                                                                <div style={{ marginTop: 8, fontSize: 12, color: '#999', fontWeight: 700, fontStyle: 'italic' }}>No notes yet.</div>
+                                                            )}
+                                                          </div>
+                                                        );
+                                                      })
+                                                    )}
+                                                  </div>
                                                 )}
                                               </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
+                                            );
+                                          })}
                                     </div>
                                   )}
                                 </div>

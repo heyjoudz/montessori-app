@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, Component } from 'react';
 import { supabase } from './supabaseClient';
 import { useAuth } from './context/AuthContext';
 import LoginScreen from './LoginScreen';
+import WaitingApproval from './WaitingApproval'; 
 import { THEME, FontLoader } from './ui/theme';
 
 import {
@@ -278,7 +279,7 @@ export default function App() {
   const [curriculumAreas, setCurriculumAreas] = useState([]);
   const [curriculumCategories, setCurriculumCategories] = useState([]);
 
-  const [masterPlans, setMasterPlans] = useState([]);     // term_plans
+  const [masterPlans, setMasterPlans] = useState([]);      // term_plans
   const [planSessions, setPlanSessions] = useState([]);   // term_plan_sessions
 
   const [initialLoading, setInitialLoading] = useState(true);
@@ -297,6 +298,15 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
+
+    // ✅ GATEKEEPER CHECK:
+    // This stops pending users from loading any data
+    const status = user.user_metadata?.status;
+    if (status === 'pending') {
+      setInitialLoading(false);
+      return;
+    }
+
     let alive = true;
 
     async function loadCore() {
@@ -475,6 +485,16 @@ export default function App() {
 
   if (loading) return <LoadingScreen />;
   if (!user) return <LoginScreen />;
+
+  // ----------------------------------------------------
+  // ✅ GATEKEEPER: Block Pending Users
+  // ----------------------------------------------------
+  // This passes the full USER object to the waiting screen
+  // so we can read the First Name metadata.
+  if (user.user_metadata?.status === 'pending') {
+    return <WaitingApproval user={user} onLogout={signOut} />;
+  }
+
   if (initialLoading) return <LoadingScreen />;
 
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
