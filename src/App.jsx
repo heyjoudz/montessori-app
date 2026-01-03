@@ -5,6 +5,9 @@ import LoginScreen from './LoginScreen';
 import WaitingApproval from './WaitingApproval'; 
 import { THEME, FontLoader } from './ui/theme';
 
+// ✅ Import the new Admin View
+import AdminView from './views/AdminView';
+
 import {
   normalizeStatusCode,
   dateISO,
@@ -489,8 +492,6 @@ export default function App() {
   // ----------------------------------------------------
   // ✅ GATEKEEPER: Block Pending Users
   // ----------------------------------------------------
-  // This passes the full USER object to the waiting screen
-  // so we can read the First Name metadata.
   if (user.user_metadata?.status === 'pending') {
     return <WaitingApproval user={user} onLogout={signOut} />;
   }
@@ -596,6 +597,9 @@ export default function App() {
             )}
 
             {viewState === 'CONFIG' && <ConfigurationView isReadOnly={!isSupervisor} />}
+
+            {/* ✅ Render the Admin View when selected */}
+            {viewState === 'ADMIN' && <AdminView />}
           </ErrorBoundary>
         </div>
       </div>
@@ -607,6 +611,9 @@ export default function App() {
 // SIDEBAR (lighter weights)
 // ------------------------
 function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
+  // Check if supervisor/admin
+  const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
+
   return (
     <div style={{ position: 'sticky', top: 0, height: '100vh', background: '#FFFFFF', borderRight: '1px solid #eee', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '26px 22px', borderBottom: '1px solid #eee' }}>
@@ -630,6 +637,11 @@ function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
         <NavItem label="Scope & Sequence" active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')} />
         <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} />
         <NavItem label="Configuration" active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} />
+        
+        {/* ✅ Only show Admin link if they are a supervisor */}
+        {isSupervisor && (
+           <NavItem label="Admin Panel" active={viewState === 'ADMIN'} onClick={() => onNavigate('ADMIN')} />
+        )}
       </div>
 
       <div style={{ padding: 22 }}>
