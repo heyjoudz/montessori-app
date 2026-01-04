@@ -105,6 +105,9 @@ export default function LoginScreen() {
     e.target.style.boxShadow = 'none';
   };
 
+  // Helper to capitalize first letter
+  const capitalize = (s) => s && s[0].toUpperCase() + s.slice(1);
+
   const handleAuth = async (e) => {
     e.preventDefault();
     if (loading) return;
@@ -114,7 +117,6 @@ export default function LoginScreen() {
 
     try {
       if (isSignUp) {
-        // ✅ Updated: Metadata no longer includes role or school_id
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -122,7 +124,7 @@ export default function LoginScreen() {
             data: { 
               first_name: firstName, 
               last_name: lastName,
-              status: 'pending' // Default status is pending approval
+              status: 'pending'
             } 
           }
         });
@@ -133,7 +135,39 @@ export default function LoginScreen() {
         if (error) throw error;
       }
     } catch (err) {
-      setError(err?.message || 'Something went wrong. Please try again.');
+      let msg = err?.message;
+
+      // ✅ SHORT & SARCASTIC MODE
+      if (msg === 'Invalid login credentials' && !isSignUp) {
+        try {
+          // Check if user exists to choose the right roast
+          const { data } = await supabase
+            .from('profiles')
+            .select('first_name')
+            .eq('email', email)
+            .single();
+
+          // Get name or guess it
+          const name = data?.first_name 
+            ? capitalize(data.first_name) 
+            : capitalize(email.split('@')[0] || 'Friend');
+
+          if (data) {
+            // Case 1: Exists -> Wrong Password
+            msg = `Wake up ${name}! Wrong password. 🪐`;
+          } else {
+            // Case 2: No Account -> Needs Sign Up
+            msg = `${name}, focus... click "Sign Up" first. 👵`;
+          }
+        } catch (checkErr) {
+          // Fallback if check fails
+          msg = "Oops! That email or password didn't work. 🙈";
+        }
+      } else if (!msg) {
+        msg = 'Something went wrong. Please try again.';
+      }
+
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -255,6 +289,7 @@ export default function LoginScreen() {
                       style={inputBase}
                       onFocus={focusIn}
                       onBlur={focusOut}
+                      placeholder="e.g. Joud"
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -267,6 +302,7 @@ export default function LoginScreen() {
                       style={inputBase}
                       onFocus={focusIn}
                       onBlur={focusOut}
+                      placeholder="Chamoun"
                     />
                   </div>
                 </div>
@@ -283,6 +319,7 @@ export default function LoginScreen() {
                 style={inputBase}
                 onFocus={focusIn}
                 onBlur={focusOut}
+                placeholder="you@school.com"
                 autoComplete="email"
               />
             </div>
@@ -297,6 +334,7 @@ export default function LoginScreen() {
                 style={inputBase}
                 onFocus={focusIn}
                 onBlur={focusOut}
+                placeholder="••••••••"
                 autoComplete={isSignUp ? 'new-password' : 'current-password'}
               />
             </div>

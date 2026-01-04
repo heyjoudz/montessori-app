@@ -680,6 +680,24 @@ function Sidebar({
 }) {
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
 
+  // ✅ SAFE LOGOUT HANDLER (Prevents 403 freeze)
+  const handleSafeSignOut = async () => {
+    // Attempt normal sign out
+    const { error } = await supabase.auth.signOut();
+    
+    // Log error if any (usually 403 Forbidden if session expired)
+    if (error) console.log("Logout error (ignored):", error.message);
+
+    // 🔥 WIPE LOCAL STORAGE
+    localStorage.clear();
+
+    // Force UI callback
+    if (onSignOut) onSignOut();
+    
+    // Hard redirect to clean state
+    window.location.href = '/';
+  };
+
   return (
     <div style={{ position: 'sticky', top: 0, height: '100vh', background: '#FFFFFF', borderRight: '1px solid #eee', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '26px 22px', borderBottom: '1px solid #eee' }}>
@@ -745,7 +763,11 @@ function Sidebar({
       </div>
 
       <div style={{ padding: 22 }}>
-        <Button variant="ghost" onClick={onSignOut} style={{ width: '100%', border: '1px solid #eee', fontWeight: 500 }}>
+        <Button 
+          variant="ghost" 
+          onClick={handleSafeSignOut} 
+          style={{ width: '100%', border: '1px solid #eee', fontWeight: 500 }}
+        >
           Sign Out
         </Button>
       </div>

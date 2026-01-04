@@ -12,7 +12,7 @@ export default function WaitingApproval({ user, onLogout }) {
       <>
         Thanks for signing up! We are currently reviewing your request to join.
         <br /><br />
-        You will receive an email confirmation once your acount is active.
+        You will receive an email confirmation once your account is active.
       </>
     )
   };
@@ -27,9 +27,21 @@ export default function WaitingApproval({ user, onLogout }) {
     accent: THEME.brandAccent,
   };
 
+  // ✅ SAFE LOGOUT HANDLER
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    // 1. Attempt to tell Supabase to sign out
+    const { error } = await supabase.auth.signOut();
+    if (error) console.log("Logout error (ignored):", error.message);
+
+    // 2. 🔥 NUCLEAR OPTION: Wipe Local Storage
+    // This removes the stuck token so the browser forgets who you are.
+    localStorage.clear();
+
+    // 3. Force UI update
     if (onLogout) onLogout();
+    
+    // 4. Force hard reload to clear any stuck cache/state
+    window.location.href = '/'; // Better than reload() for redirecting to login
   };
 
   return (
