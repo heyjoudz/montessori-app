@@ -255,7 +255,6 @@ export default function LoginScreen() {
                       style={inputBase}
                       onFocus={focusIn}
                       onBlur={focusOut}
-                      placeholder="e.g. Joud"
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -268,7 +267,6 @@ export default function LoginScreen() {
                       style={inputBase}
                       onFocus={focusIn}
                       onBlur={focusOut}
-                      placeholder="Chamoun"
                     />
                   </div>
                 </div>
@@ -299,7 +297,6 @@ export default function LoginScreen() {
                 style={inputBase}
                 onFocus={focusIn}
                 onBlur={focusOut}
-                placeholder="••••••••"
                 autoComplete={isSignUp ? 'new-password' : 'current-password'}
               />
             </div>
