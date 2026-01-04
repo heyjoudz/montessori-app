@@ -2,30 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { THEME, FontLoader } from './ui/theme';
 
-// Mock list of schools - eventually this will come from your database
-const SCHOOLS = [
-  { id: 'montessori-beirut', name: 'Montessori Beirut' },
-  { id: 'sunshine-academy', name: 'Sunshine Academy' },
-  { id: 'little-steps', name: 'Little Steps Montessori' }
-];
-
-const ROLES = [
-  { value: 'parent', label: 'Parent' },
-  { value: 'teacher', label: 'Teacher' },
-  { value: 'admin', label: 'School Admin' }
-];
-
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  
+   
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  
-  // ✅ New States for Role and School
-  const [selectedRole, setSelectedRole] = useState('parent'); 
-  const [selectedSchool, setSelectedSchool] = useState('');
-
+   
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -102,17 +85,6 @@ export default function LoginScreen() {
     transition: 'box-shadow 0.15s, border-color 0.15s',
   };
 
-  // Same style for Select elements
-  const selectBase = {
-    ...inputBase,
-    appearance: 'none', // removes default arrow in some browsers
-    backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23${UI.primary.replace('#', '')}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
-    backgroundRepeat: 'no-repeat',
-    backgroundPosition: 'right 16px center',
-    backgroundSize: '16px',
-    cursor: 'pointer'
-  };
-
   const labelBase = {
     display: 'block',
     fontSize: 11,
@@ -137,18 +109,12 @@ export default function LoginScreen() {
     e.preventDefault();
     if (loading) return;
 
-    // Basic Validation for Sign Up
-    if (isSignUp && (!selectedSchool || !selectedRole)) {
-      setError("Please select a school and a role.");
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
     try {
       if (isSignUp) {
-        // ✅ Changed: Sending role, school, and 'pending' status
+        // ✅ Updated: Metadata no longer includes role or school_id
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -156,8 +122,6 @@ export default function LoginScreen() {
             data: { 
               first_name: firstName, 
               last_name: lastName,
-              role: selectedRole,
-              school_id: selectedSchool,
               status: 'pending' // Default status is pending approval
             } 
           }
@@ -308,36 +272,6 @@ export default function LoginScreen() {
                     />
                   </div>
                 </div>
-
-                {/* Role & School Selection */}
-                <div style={{ display: 'flex', gap: 16, marginBottom: SP.fieldGap }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelBase}>I am a...</label>
-                    <select 
-                      value={selectedRole}
-                      onChange={(e) => setSelectedRole(e.target.value)}
-                      style={selectBase}
-                      onFocus={focusIn}
-                      onBlur={focusOut}
-                    >
-                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelBase}>School</label>
-                    <select 
-                      value={selectedSchool}
-                      onChange={(e) => setSelectedSchool(e.target.value)}
-                      style={selectBase}
-                      required
-                      onFocus={focusIn}
-                      onBlur={focusOut}
-                    >
-                      <option value="" disabled>Select...</option>
-                      {SCHOOLS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                </div>
               </>
             )}
 
@@ -351,7 +285,6 @@ export default function LoginScreen() {
                 style={inputBase}
                 onFocus={focusIn}
                 onBlur={focusOut}
-                placeholder="you@school.com"
                 autoComplete="email"
               />
             </div>

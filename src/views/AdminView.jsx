@@ -46,7 +46,7 @@ export default function AdminView() {
 Your account has been approved by the school administration.
 
 You can now log in to the portal here:
-https://montessorios.vercel.app
+https://montessori-app-eight.vercel.app
 
 If you have any questions, please reply to this email.
 
