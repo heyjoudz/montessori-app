@@ -274,6 +274,10 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   };
 
+  // ✅ New State for Multi-School Handling
+  const [schools, setSchools] = useState([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState(null);
+
   const [classrooms, setClassrooms] = useState([]);
   const [students, setStudents] = useState([]);
   const [planItems, setPlanItems] = useState([]);
@@ -282,7 +286,7 @@ export default function App() {
   const [curriculumAreas, setCurriculumAreas] = useState([]);
   const [curriculumCategories, setCurriculumCategories] = useState([]);
 
-  const [masterPlans, setMasterPlans] = useState([]);      // term_plans
+  const [masterPlans, setMasterPlans] = useState([]);       // term_plans
   const [planSessions, setPlanSessions] = useState([]);   // term_plan_sessions
 
   const [initialLoading, setInitialLoading] = useState(true);
@@ -299,25 +303,49 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // 1. Initial Load: Get Schools for the Customer
   useEffect(() => {
-    if (!user) return;
-
-    // ✅ GATEKEEPER CHECK:
-    // This stops pending users from loading any data
+    if (!user || !profile) return;
     const status = user.user_metadata?.status;
     if (status === 'pending') {
       setInitialLoading(false);
       return;
     }
 
-    let alive = true;
+    async function initSchools() {
+      // If profile has a customer_id, fetch schools for that customer
+      // If not (legacy/superuser), fetch all schools or handle gracefully
+      let query = supabase.from('schools').select('*').order('name');
+      
+      if (profile.customer_id) {
+        query = query.eq('customer_id', profile.customer_id);
+      }
 
-    async function loadCore() {
+      const { data, error } = await query;
+      if (!error && data?.length > 0) {
+        setSchools(data);
+        // Default to first school if none selected
+        setSelectedSchoolId(data[0].id);
+      } else {
+        setInitialLoading(false); // No schools found
+      }
+    }
+
+    initSchools();
+  }, [user, profile]);
+
+  // 2. Main Data Load: Triggers when selectedSchoolId changes
+  useEffect(() => {
+    if (!selectedSchoolId) return;
+
+    let alive = true;
+    setInitialLoading(true);
+
+    async function loadSchoolData() {
       try {
-        // Core tables first
-        const [cls, stus, acts, areas, cats, tPlans] = await Promise.all([
-          supabase.from('classrooms').select('*').order('name'),
-          supabase.from('students').select('*').order('first_name'),
+        // Core tables first - Filtered by School ID where applicable
+        const [cls, acts, areas, cats, tPlans] = await Promise.all([
+          supabase.from('classrooms').select('*').eq('school_id', selectedSchoolId).order('name'),
           supabase.from('curriculum_activities').select('*').order('sort_order'),
           supabase.from('curriculum_areas').select('*').order('name'),
           supabase.from('curriculum_categories').select('*').order('name'),
@@ -333,38 +361,64 @@ export default function App() {
           categories: cats.data || []
         });
 
-        setClassrooms(cls.data || []);
-        setStudents(stus.data || []);
+        const loadedClassrooms = cls.data || [];
+        setClassrooms(loadedClassrooms);
+
+        // Fetch students ONLY for these classrooms
+        const classroomIds = loadedClassrooms.map(c => c.id);
+        let loadedStudents = [];
+        
+        if (classroomIds.length > 0) {
+          const stus = await supabase.from('students').select('*').in('classroom_id', classroomIds).order('first_name');
+          loadedStudents = stus.data || [];
+        }
+        setStudents(loadedStudents);
 
         setCurriculumAreas(areas.data || []);
         setCurriculumCategories(cats.data || []);
 
         setCurriculum((acts.data || []).map(enrichCurrRefs));
-        setMasterPlans(tPlans.data || []);
+        
+        // Filter master plans by the loaded classrooms (if they have classroom linkage)
+        // Note: term_plans usually link to classroom_id
+        const relevantPlans = (tPlans.data || []).filter(tp => 
+           !tp.classroom_id || classroomIds.includes(tp.classroom_id)
+        );
+        setMasterPlans(relevantPlans);
 
         // Render UI now (avoid tunnel “stuck loading”)
         setInitialLoading(false);
 
         // Heavy tables in background
-        loadHeavyInBackground();
+        loadHeavyInBackground(classroomIds);
       } catch (e) {
         console.error('Core Data Load Error', e);
         if (alive) setInitialLoading(false);
-        showToast({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load core data.' });
+        showToast({ type: 'error', title: 'Load error', message: e?.message || 'Failed to load school data.' });
       }
     }
 
-    async function loadHeavyInBackground() {
+    async function loadHeavyInBackground(classroomIds) {
+      if (classroomIds.length === 0) {
+        setPlanItems([]);
+        setPlanSessions([]);
+        return;
+      }
+
       try {
+        // Fetch plan items only for relevant classrooms
         const allPlanItems = await fetchAllRows((from, to) =>
           supabase
             .from('plan_items')
             .select('*')
+            .in('classroom_id', classroomIds) // ✅ Filter by School's Classrooms
             .neq('status', 'Archived')
             .order('id', { ascending: true })
             .range(from, to)
         );
 
+        // Fetch term plan sessions (a bit harder to filter, usually linked via plan_id -> classroom)
+        // For optimization we fetch all, or filter by plan IDs if we had them list readily available
         const allTermSessions = await fetchAllRows((from, to) =>
           supabase
             .from('term_plan_sessions')
@@ -388,9 +442,9 @@ export default function App() {
       }
     }
 
-    loadCore();
+    loadSchoolData();
     return () => { alive = false; };
-  }, [user]);
+  }, [selectedSchoolId]); // Re-run when school changes
 
   const handleQuickAdd = async (payload) => {
     const student = students.find(s => s.id == payload.student_id);
@@ -527,6 +581,10 @@ export default function App() {
           viewState={viewState}
           onNavigate={setViewState}
           onSignOut={signOut}
+          // ✅ Pass School Switching Props
+          schools={schools}
+          selectedSchoolId={selectedSchoolId}
+          onSchoolChange={setSelectedSchoolId}
         />
 
         <div
@@ -608,10 +666,18 @@ export default function App() {
 }
 
 // ------------------------
-// SIDEBAR (lighter weights)
+// SIDEBAR (with School Switcher)
 // ------------------------
-function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
-  // Check if supervisor/admin
+function Sidebar({ 
+  firstName, 
+  profile, 
+  viewState, 
+  onNavigate, 
+  onSignOut,
+  schools,
+  selectedSchoolId,
+  onSchoolChange
+}) {
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
 
   return (
@@ -626,6 +692,41 @@ function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
           </div>
         </div>
 
+        {/* ✅ SCHOOL SELECTOR OR NAME */}
+        {schools && schools.length > 1 ? (
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: THEME.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Current School
+            </label>
+            <select
+              value={selectedSchoolId || ''}
+              onChange={(e) => onSchoolChange(Number(e.target.value))}
+              style={{
+                width: '100%',
+                marginTop: 4,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: '1px solid #ddd',
+                fontSize: 14,
+                fontWeight: 500,
+                color: THEME.text,
+                fontFamily: THEME.sansFont,
+                cursor: 'pointer',
+                outline: 'none',
+                background: '#f9f9f9'
+              }}
+            >
+              {schools.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: THEME.textMuted, fontWeight: 500, marginBottom: 8 }}>
+            {schools[0]?.name || '...'}
+          </div>
+        )}
+
         <div>
           <div style={{ fontWeight: 500, fontSize: 15, color: THEME.text }}>{firstName}</div>
         </div>
@@ -638,7 +739,6 @@ function Sidebar({ firstName, profile, viewState, onNavigate, onSignOut }) {
         <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} />
         <NavItem label="Configuration" active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} />
         
-        {/* ✅ Only show Admin link if they are a supervisor */}
         {isSupervisor && (
            <NavItem label="Admin Panel" active={viewState === 'ADMIN'} onClick={() => onNavigate('ADMIN')} />
         )}
