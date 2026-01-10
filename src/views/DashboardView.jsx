@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { THEME, getSubjectStyle } from '../ui/theme';
+// src/views/DashboardView.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../supabaseClient';
+import { THEME, getSubjectStyle, getStatusStyle } from '../ui/theme';
 import { ACADEMIC_START, safeDate, dateISO, addDays, normalizeStatusCode } from '../utils/helpers';
 
 import Card from '../components/ui/Card';
@@ -7,7 +9,18 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import KanbanColumn from '../components/business/Kanban';
 
-// -------------------- helpers --------------------
+import {
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  Calendar as CalendarIcon,
+  ArrowRight,
+  Search,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
+
+// -------------------- Helpers --------------------
 
 function toDate(v) {
   if (!v) return null;
@@ -26,24 +39,9 @@ function toDate(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function normalizeDateRangeLabel(txt) {
-  const s = String(txt || '').trim();
-  if (!s) return '';
-  return s
-    .replace(/\u2013|\u2014/g, '-') // en/em dash -> hyphen
-    .replace(/\s*-\s*/g, ' - ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function softShadow() {
-  return '0 10px 30px rgba(10, 53, 92, 0.06)';
-}
-
 function fmtMonthLabel(d) {
   try {
-    const m = d.toLocaleString('en-US', { month: 'long' });
-    return `${m} ${d.getFullYear()}`;
+    return d.toLocaleString('en-US', { month: 'long' }) + ' ' + d.getFullYear();
   } catch {
     return 'Month';
   }
@@ -62,12 +60,9 @@ function parseActiveDate(activeDate) {
 function monthBounds(dateObj) {
   const y = dateObj.getFullYear();
   const m = dateObj.getMonth();
-  const start = new Date(y, m, 1);
-  const end = new Date(y, m + 1, 1);
-  return { y, m, start, end };
+  return { y, m, start: new Date(y, m, 1), end: new Date(y, m + 1, 1) };
 }
 
-// Week must have at least 3 weekdays (Mon-Fri) in target month
 function hasStrictOverlap(weekStart, monthStart, monthEnd) {
   const ws = toDate(weekStart);
   if (!ws) return false;
@@ -83,15 +78,7 @@ function normalizeStatusSafe(raw) {
   const s = (raw ?? '').toString().trim();
   if (!s) return 'P';
   const u = s.toUpperCase();
-  if (u === 'A') return 'A';
-  if (u === 'P' || u === 'W' || u === 'M') return u;
-
-  const n = s.toLowerCase().replace(/[_-]/g, ' ').trim();
-  if (n.includes('aim')) return 'A';
-  if (n.includes('practice')) return 'W';
-  if (n.includes('master')) return 'M';
-  if (n.includes('present')) return 'P';
-
+  if (u === 'A' || u === 'P' || u === 'W' || u === 'M') return u;
   try {
     const z = normalizeStatusCode(raw);
     return z === 'A' ? 'A' : z;
@@ -101,99 +88,165 @@ function normalizeStatusSafe(raw) {
 }
 
 function isArchivedStatus(raw) {
-  const n = String(raw || '').toLowerCase();
-  return n.includes('archiv');
+  return String(raw || '').toLowerCase().includes('archiv');
 }
 
-// Parse "Dec 2 - 6", "Dec 29 - Jan 2", etc; infer year using academic rollover (Sep-Dec same year, Jan-Aug next year)
-function parseTermPlanDateRange(dateRange, academicStartDate) {
-  const label = normalizeDateRangeLabel(dateRange);
-  if (!label) return null;
-
-  const months = {
-    jan: 0,
-    january: 0,
-    feb: 1,
-    february: 1,
-    mar: 2,
-    march: 2,
-    apr: 3,
-    april: 3,
-    may: 4,
-    jun: 5,
-    june: 5,
-    jul: 6,
-    july: 6,
-    aug: 7,
-    august: 7,
-    sep: 8,
-    sept: 8,
-    september: 8,
-    oct: 9,
-    october: 9,
-    nov: 10,
-    november: 10,
-    dec: 11,
-    december: 11
-  };
-
-  const acad = toDate(academicStartDate);
-  const acadYear = acad ? acad.getFullYear() : new Date().getFullYear();
-  const acadMonth = acad ? acad.getMonth() : 8; // default Sep
-  const inferYearForMonth = (mIdx) => (mIdx >= acadMonth ? acadYear : acadYear + 1);
-
-  const re = /^([A-Za-z]{3,9})\s+(\d{1,2})(?:,\s*(\d{4}))?\s*-\s*(?:([A-Za-z]{3,9})\s+)?(\d{1,2})(?:,\s*(\d{4}))?$/;
-  const m = label.match(re);
-  if (!m) return null;
-
-  const m1Name = String(m[1] || '').toLowerCase();
-  const d1 = parseInt(m[2], 10);
-  const y1Explicit = m[3] ? parseInt(m[3], 10) : null;
-
-  const m2NameRaw = m[4] ? String(m[4]).toLowerCase() : null;
-  const d2 = parseInt(m[5], 10);
-  const y2Explicit = m[6] ? parseInt(m[6], 10) : null;
-
-  const m1 = months[m1Name];
-  if (m1 === undefined || !d1) return null;
-
-  const m2 = m2NameRaw ? months[m2NameRaw] : m1;
-  if (m2 === undefined || !d2) return null;
-
-  const y1 = y1Explicit ?? inferYearForMonth(m1);
-  let y2 = y2Explicit ?? inferYearForMonth(m2);
-
-  const start = new Date(y1, m1, d1);
-  let end = new Date(y2, m2, d2);
-
-  if (end < start) {
-    if (!y2Explicit) end = new Date(y2 + 1, m2, d2);
-  }
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
-  return { start, end, label };
+function normalizeScore(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const clean = String(raw).replace(/%/g, '').trim();
+  const num = parseFloat(clean);
+  return isNaN(num) ? null : num;
 }
 
-function dedupeKey(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+// -------------------- Theme-aligned tiny UI atoms --------------------
 
-// -------------------- Add modal --------------------
+const INPUT_BASE = {
+  width: '100%',
+  padding: '10px 12px',
+  borderRadius: THEME.radius,
+  border: '1px solid #eee',
+  background: '#fff',
+  fontFamily: THEME.sansFont,
+  color: THEME.text,
+  fontSize: 13,
+  outline: 'none'
+};
+
+const SELECT_BASE = {
+  ...INPUT_BASE,
+  cursor: 'pointer'
+};
+
+const Label = ({ children }) => (
+  <div style={{ fontSize: 11, fontWeight: 700, color: THEME.textMuted, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
+    {children}
+  </div>
+);
+
+const IconBtn = ({ onClick, title, children }) => (
+  <button
+    title={title}
+    onClick={onClick}
+    style={{
+      width: 34,
+      height: 34,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: THEME.radius,
+      border: '1px solid #eee',
+      background: '#fff',
+      boxShadow: '3px 3px 0px 0px #BFD8D2',
+      cursor: 'pointer',
+      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.transform = 'translate(-1px,-1px)';
+      e.currentTarget.style.boxShadow = '4px 4px 0px 0px #BFD8D2';
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.transform = 'translate(0,0)';
+      e.currentTarget.style.boxShadow = '3px 3px 0px 0px #BFD8D2';
+    }}
+  >
+    {children}
+  </button>
+);
+
+const ClassroomBtn = ({ active, label, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      padding: '8px 12px',
+      borderRadius: THEME.radius,
+      border: active ? `2px solid ${THEME.brandPrimary}` : '1px solid #eee',
+      background: active ? THEME.brandPrimary : '#fff',
+      color: active ? '#fff' : THEME.text,
+      fontFamily: THEME.sansFont,
+      fontSize: 12,
+      fontWeight: 700,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      cursor: 'pointer',
+      boxShadow: active ? `3px 3px 0px 0px ${THEME.brandSecondary}` : `3px 3px 0px 0px ${THEME.brandAccent}`,
+      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.transform = 'translate(-1px,-1px)';
+      e.currentTarget.style.boxShadow = active ? `4px 4px 0px 0px ${THEME.brandSecondary}` : `4px 4px 0px 0px ${THEME.brandAccent}`;
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.transform = 'translate(0,0)';
+      e.currentTarget.style.boxShadow = active ? `3px 3px 0px 0px ${THEME.brandSecondary}` : `3px 3px 0px 0px ${THEME.brandAccent}`;
+    }}
+  >
+    {label}
+  </button>
+);
+
+const SoftChip = ({ dot, label, count }) => (
+  <div
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '8px 12px',
+      background: '#fff',
+      border: '1px solid #eee',
+      borderRadius: THEME.radius,
+      boxShadow: '3px 3px 0px 0px #F9F3EF',
+      fontFamily: THEME.sansFont,
+      fontSize: 12,
+      fontWeight: 700,
+      color: THEME.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+      whiteSpace: 'nowrap'
+    }}
+  >
+    <span style={{ width: 8, height: 8, background: dot }} />
+    <span style={{ opacity: 0.9 }}>{label}</span>
+    <span style={{ marginLeft: 2, fontWeight: 800 }}>{count}</span>
+  </div>
+);
+
+const ProgressRing = ({ pct = 0, size = 40 }) => {
+  const stroke = 4;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const dash = (clamped / 100) * c;
+
+  return (
+    <svg width={size} height={size} style={{ display: 'block' }}>
+      <circle cx={size / 2} cy={size / 2} r={r} stroke="#F9F3EF" strokeWidth={stroke} fill="none" />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke={THEME.brandAccent}
+        strokeWidth={stroke}
+        fill="none"
+        strokeDasharray={`${dash} ${c - dash}`}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+    </svg>
+  );
+};
+
+// -------------------- Modals --------------------
 
 function AddActivityModal({
   open,
   onClose,
-  statusDefault = 'P',
+  statusDefault,
   classroom,
   classroomStudents,
   currMeta,
   activeDateISO,
   onQuickAdd,
   showToast,
-  defaultDate = ''
+  defaultDate
 }) {
   const [status, setStatus] = useState(statusDefault);
   const [date, setDate] = useState(defaultDate);
@@ -207,8 +260,8 @@ function AddActivityModal({
 
   useEffect(() => {
     if (!open) return;
-    setStatus(statusDefault);
-    setDate(defaultDate);
+    setStatus(statusDefault || 'P');
+    setDate(defaultDate || '');
     setAreaId('');
     setCategoryId('');
     setActivityId('');
@@ -218,20 +271,19 @@ function AddActivityModal({
     setSelectedStudentIds([]);
   }, [open, statusDefault, defaultDate]);
 
-  const areaOptions = useMemo(() => {
-    const a = (currMeta?.areas || []).slice();
-    return [{ value: '', label: 'Select…' }, ...a.map((x) => ({ value: String(x.id), label: x.name }))];
-  }, [currMeta]);
+  const areaOptions = useMemo(
+    () => [{ value: '', label: 'Select…' }, ...(currMeta?.areas || []).map((x) => ({ value: String(x.id), label: x.name }))],
+    [currMeta]
+  );
 
   const categoryOptions = useMemo(() => {
-    const all = (currMeta?.categories || []).slice();
+    const all = currMeta?.categories || [];
     const filtered = areaId ? all.filter((c) => String(c.area_id) === String(areaId)) : all;
     return [{ value: '', label: '—' }, ...filtered.map((c) => ({ value: String(c.id), label: c.name }))];
   }, [currMeta, areaId]);
 
   const activityOptions = useMemo(() => {
-    const all = (currMeta?.activities || []).slice();
-    let filtered = all;
+    let filtered = currMeta?.activities || [];
     if (categoryId) filtered = filtered.filter((a) => String(a.category_id) === String(categoryId));
     return [{ value: '', label: 'Type to search…' }, ...filtered.map((a) => ({ value: String(a.id), label: a.name }))];
   }, [currMeta, categoryId]);
@@ -239,166 +291,276 @@ function AddActivityModal({
   const filteredStudents = useMemo(() => {
     const q = (studentSearch || '').toLowerCase().trim();
     if (!q) return classroomStudents;
-    return (classroomStudents || []).filter((s) =>
-      `${s.first_name || ''} ${s.last_name || ''}`.toLowerCase().includes(q)
-    );
+    return (classroomStudents || []).filter((s) => `${s.first_name} ${s.last_name}`.toLowerCase().includes(q));
   }, [classroomStudents, studentSearch]);
 
   const toggleStudent = (id) =>
     setSelectedStudentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  const selectAllFiltered = () =>
-    setSelectedStudentIds((prev) => Array.from(new Set([...prev, ...filteredStudents.map((s) => s.id)])));
-  const clearAll = () => setSelectedStudentIds([]);
 
   const save = async () => {
-    if (!classroom?.id) return showToast?.({ type: 'error', title: 'Missing classroom', message: 'Select a classroom first.' });
-    if (!selectedStudentIds.length) return showToast?.({ type: 'error', title: 'No students', message: 'Select at least one student.' });
+    if (!classroom?.id) return;
+    if (!selectedStudentIds.length) {
+      showToast?.('Select at least one student.');
+      return;
+    }
 
     let pickedName = (activityText || '').trim();
     const picked = (currMeta?.activities || []).find((a) => String(a.id) === String(activityId));
-
     let catId = categoryId || null;
     let arId = areaId || null;
-    let arLabel = '';
 
     if (picked) {
       pickedName = picked.name;
-      const cat = (currMeta?.categories || []).find((c) => String(c.id) === String(picked.category_id));
-      const area = cat ? (currMeta?.areas || []).find((ar) => String(ar.id) === String(cat.area_id)) : null;
       catId = picked.category_id;
-      arId = area?.id || areaId;
-      arLabel = area?.name || '';
-    } else {
-      const cat = (currMeta?.categories || []).find((c) => String(c.id) === String(categoryId));
-      const area = cat ? (currMeta?.areas || []).find((ar) => String(ar.id) === String(cat.area_id)) : null;
-      if (area) {
-        arId = area.id;
-        arLabel = area.name;
-      }
+      arId = picked.area_id;
     }
-
-    if (!pickedName) return showToast?.({ type: 'error', title: 'Missing activity', message: 'Pick an activity or type one.' });
-
-    const finalDate = date || activeDateISO || dateISO(new Date());
-    const notes = (subNote || '').trim();
+    if (!pickedName) {
+      showToast?.('Select or type an activity.');
+      return;
+    }
 
     try {
       await Promise.all(
-        selectedStudentIds.map((student_id) =>
+        selectedStudentIds.map((sid) =>
           onQuickAdd?.({
-            student_id,
+            student_id: sid,
             status,
-            date: finalDate,
+            date: date || activeDateISO,
             activity: pickedName,
-            notes,
-            raw_activity: notes,
-            curriculum_activity_id: picked?.id || null,
+            notes: subNote,
+            curriculum_activity_id: picked?.id,
             curriculum_category_id: catId,
-            curriculum_area_id: arId,
-            area: arLabel
+            curriculum_area_id: arId
           })
         )
       );
-      showToast?.({ type: 'success', title: 'Added', message: `Added “${pickedName}” for ${selectedStudentIds.length} student(s).` });
-      onClose?.();
+      onClose();
     } catch (e) {
-      showToast?.({ type: 'error', title: 'Error', message: e?.message || 'Failed to add.' });
+      console.error(e);
+      showToast?.('Failed to add activity.');
     }
   };
 
   if (!open) return null;
 
   return (
-    <Modal title="Add activity" onClose={onClose} width={900}>
-      <div style={{ display: 'grid', gap: 16, maxHeight: '80vh', overflowY: 'auto', paddingRight: 4 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+    <Modal title="Add Activity" onClose={onClose} width={720}>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Classroom</div>
-            <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: '10px 12px', background: '#fff', fontWeight: 600, color: THEME.text }}>
-              {classroom?.name || '—'}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Status</div>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
+            <Label>Status</Label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={SELECT_BASE}>
               <option value="P">To Present</option>
               <option value="W">Practicing</option>
-              <option value="A">Next Month Aim</option>
               <option value="M">Mastered</option>
+              <option value="A">Next Month Aim</option>
             </select>
           </div>
-
           <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Date (optional)</div>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }} />
+            <Label>Date</Label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={INPUT_BASE} />
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '0.9fr 0.9fr 1.2fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Area</div>
-            <select value={areaId} onChange={(e) => { setAreaId(e.target.value); setCategoryId(''); setActivityId(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
-              {areaOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            <Label>Area</Label>
+            <select value={areaId} onChange={(e) => setAreaId(e.target.value)} style={SELECT_BASE}>
+              {areaOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </div>
-
           <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Category</div>
-            <select value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setActivityId(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
-              {categoryOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            <Label>Category</Label>
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} style={SELECT_BASE}>
+              {categoryOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Activity</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '0.9fr 1.1fr', gap: 10 }}>
-              <select value={activityId} onChange={(e) => { setActivityId(e.target.value); setActivityText(''); }} style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }}>
-                {activityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-
-              <input value={activityText} onChange={(e) => { setActivityText(e.target.value); setActivityId(''); }} placeholder="Custom activity…" style={{ width: '100%', padding: '10px', borderRadius: 12, border: '1px solid #ddd' }} />
-            </div>
           </div>
         </div>
 
         <div>
-          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 600, marginBottom: 6 }}>Note / Sub-activity</div>
-          <textarea value={subNote} onChange={(e) => setSubNote(e.target.value)} style={{ width: '100%', minHeight: 90, padding: '10px', borderRadius: 12, border: '1px solid #ddd', resize: 'vertical' }} />
+          <Label>Activity</Label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <select
+              value={activityId}
+              onChange={(e) => {
+                setActivityId(e.target.value);
+                setActivityText('');
+              }}
+              style={SELECT_BASE}
+            >
+              {activityOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <input
+              placeholder="Or type custom…"
+              value={activityText}
+              onChange={(e) => {
+                setActivityText(e.target.value);
+                setActivityId('');
+              }}
+              style={INPUT_BASE}
+            />
+          </div>
         </div>
 
-        <div style={{ border: '1px solid #ddd', borderRadius: 14, overflow: 'hidden', background: '#fff' }}>
-          <div style={{ padding: '10px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee' }}>
-            <div style={{ fontWeight: 700 }}>Students ({selectedStudentIds.length})</div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <Button variant="ghost" onClick={selectAllFiltered} style={{ padding: '4px 8px' }}>Select all</Button>
-              <Button variant="ghost" onClick={clearAll} style={{ padding: '4px 8px' }}>Clear</Button>
+        <div>
+          <Label>Notes (optional)</Label>
+          <input value={subNote} onChange={(e) => setSubNote(e.target.value)} placeholder="Short note…" style={INPUT_BASE} />
+        </div>
+
+        <div style={{ border: '1px solid #eee', padding: 12, boxShadow: '3px 3px 0px 0px #F9F3EF' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: THEME.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              Students ({selectedStudentIds.length})
+            </div>
+            <div style={{ width: 260, position: 'relative' }}>
+              <input
+                value={studentSearch}
+                onChange={(e) => setStudentSearch(e.target.value)}
+                placeholder="Search…"
+                style={{ ...INPUT_BASE, paddingLeft: 34 }}
+              />
+              <div style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }}>
+                <Search size={16} color={THEME.textMuted} />
+              </div>
             </div>
           </div>
 
-          <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-            <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="Search student..." style={{ width: '100%', padding: '8px', borderRadius: 8, border: '1px solid #ddd' }} />
-            <div style={{ maxHeight: 200, overflow: 'auto' }}>
-              {filteredStudents.map((s) => (
-                <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, cursor: 'pointer', background: selectedStudentIds.includes(s.id) ? '#eef' : '#fff' }}>
-                  <input type="checkbox" checked={selectedStudentIds.includes(s.id)} onChange={() => toggleStudent(s.id)} />
-                  <div style={{ fontWeight: 600 }}>{s.first_name} {s.last_name}</div>
-                </label>
-              ))}
-            </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxHeight: 140, overflowY: 'auto', paddingRight: 6 }}>
+            {(filteredStudents || []).map((s) => {
+              const active = selectedStudentIds.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => toggleStudent(s.id)}
+                  style={{
+                    border: active ? `2px solid ${THEME.brandPrimary}` : '1px solid #eee',
+                    background: '#fff',
+                    color: THEME.text,
+                    padding: '7px 10px',
+                    borderRadius: THEME.radius,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    boxShadow: active ? `3px 3px 0px 0px ${THEME.brandAccent}` : '2px 2px 0px 0px #F9F3EF'
+                  }}
+                >
+                  {s.first_name}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>ADD</Button>
+          <Button variant="primary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="secondary" onClick={save}>
+            Add Activity
+          </Button>
         </div>
       </div>
     </Modal>
   );
 }
 
-// -------------------- main --------------------
+function BatchAssessmentModal({ open, onClose, students, templates, classroomId, teacherId, onRefresh }) {
+  const [tmplId, setTmplId] = useState('');
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(dateISO(new Date()));
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    if (templates.length > 0 && !tmplId) {
+      setTmplId(templates[0].id);
+      if (templates[0].default_date) setDate(templates[0].default_date);
+    }
+  }, [templates, open, tmplId]);
+
+  const handleCreate = async () => {
+    if (!tmplId || !title.trim()) return;
+    setLoading(true);
+    try {
+      const rows = (students || []).map((s) => ({
+        student_id: s.id,
+        classroom_id: classroomId,
+        teacher_id: teacherId || null,
+        template_id: tmplId,
+        title: title,
+        kind: 'ASSESSMENT_2',
+        assessment_date: date
+      }));
+      await supabase.from('student_assessments').insert(rows);
+      onRefresh?.();
+      onClose?.();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <Modal title="Create Class Assessment" onClose={onClose} width={540}>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <div>
+          <Label>Template</Label>
+          <select
+            value={tmplId}
+            onChange={(e) => {
+              setTmplId(e.target.value);
+              const t = templates.find((x) => String(x.id) === String(e.target.value));
+              if (t?.default_date) setDate(t.default_date);
+            }}
+            style={SELECT_BASE}
+          >
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <Label>Title</Label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Winter Term Report" style={INPUT_BASE} />
+        </div>
+
+        <div>
+          <Label>Target date</Label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={INPUT_BASE} />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <Button variant="primary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="secondary" onClick={handleCreate} disabled={loading}>
+            {loading ? 'Creating...' : 'Create'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// -------------------- MAIN DASHBOARD VIEW --------------------
 
 export default function DashboardView({
   planItems,
@@ -408,7 +570,6 @@ export default function DashboardView({
   setActiveDate,
   onUpdateItem,
   onDeleteItem,
-  onMoveItemToDate,
   curriculum,
   masterPlans,
   planSessions,
@@ -418,303 +579,262 @@ export default function DashboardView({
   curriculumCategories
 }) {
   const [selectedClassId, setSelectedClassId] = useState(classrooms?.[0]?.id || null);
+  const [dashTab, setDashTab] = useState('daily');
+
+  const [assessments, setAssessments] = useState([]);
+  const [assessmentScores, setAssessmentScores] = useState([]);
+  const [templates, setTemplates] = useState([]);
+
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const [addStatusDefault, setAddStatusDefault] = useState('P');
+  const [addDefaultDate, setAddDefaultDate] = useState('');
   const [areaFilter, setAreaFilter] = useState('ALL');
   const [search, setSearch] = useState('');
 
-  // Suggestions collapse by default
-  const [suggestAreaOpenMap, setSuggestAreaOpenMap] = useState({ __ALL__: true });
+  // Suggestions: default all closed
+  const [suggestAreaOpenMap, setSuggestAreaOpenMap] = useState({});
 
-  // Kanban expand/collapse all
-  const [kanbanExpandAction, setKanbanExpandAction] = useState(null);
+  const selectedClassroom = useMemo(
+    () => (classrooms || []).find((c) => String(c.id) === String(selectedClassId)),
+    [classrooms, selectedClassId]
+  );
 
-  // Add modal
-  const [addOpen, setAddOpen] = useState(false);
-  const [addStatusDefault, setAddStatusDefault] = useState('P');
-  const [addDefaultDate, setAddDefaultDate] = useState('');
-
-  useEffect(() => {
-    if (!selectedClassId && classrooms?.[0]?.id) setSelectedClassId(classrooms[0].id);
-  }, [classrooms, selectedClassId]);
+  const classroomStudents = useMemo(
+    () => (students || []).filter((s) => String(s.classroom_id) === String(selectedClassId)),
+    [students, selectedClassId]
+  );
 
   const activeD = useMemo(() => parseActiveDate(activeDate), [activeDate]);
-  const { y: year, m: monthIdx, start: monthStart, end: monthEnd } = useMemo(() => monthBounds(activeD), [activeD]);
   const monthLabel = useMemo(() => fmtMonthLabel(activeD), [activeD]);
 
-  const selectedClassroom = useMemo(() => classrooms.find((c) => String(c.id) === String(selectedClassId)), [classrooms, selectedClassId]);
-  const classroomStudents = useMemo(() => (students || []).filter((s) => String(s.classroom_id) === String(selectedClassId)), [students, selectedClassId]);
+  const fetchAssessments = async () => {
+    try {
+      if (!selectedClassId || classroomStudents.length === 0) return;
 
-  // Curriculum meta for dropdowns
-  const currMeta = useMemo(() => {
-    let areas = (curriculumAreas || []).slice();
-    let categories = (curriculumCategories || []).slice();
+      const studentIds = classroomStudents.map((s) => s.id);
+      const { data: assessData } = await supabase
+        .from('student_assessments')
+        .select('*')
+        .in('student_id', studentIds)
+        .order('assessment_date', { ascending: false });
 
-    if (areas.length === 0 || categories.length === 0) {
-      const areaMap = new Map();
-      const catMap = new Map();
-      (curriculum || []).forEach((item) => {
-        const aId = item.curriculum_area_id || item.area_id;
-        const aName = item.area || item.curriculum_area_name;
-        if (aId && !areaMap.has(String(aId))) areaMap.set(String(aId), { id: aId, name: aName || 'Area' });
+      if (assessData) {
+        setAssessments(assessData);
 
-        const cId = item.curriculum_category_id || item.category_id;
-        const cName = item.category || item.curriculum_category_name;
-        if (cId && !catMap.has(String(cId))) catMap.set(String(cId), { id: cId, name: cName || 'Category', area_id: aId });
-      });
-      if (areas.length === 0) areas = Array.from(areaMap.values());
-      if (categories.length === 0) categories = Array.from(catMap.values());
+        const aIds = assessData.map((a) => a.id);
+        if (aIds.length > 0) {
+          const { data: scoreData } = await supabase
+            .from('student_assessment_scores')
+            .select('*, skill:assessment_skills(name, area:curriculum_areas(name))')
+            .in('assessment_id', aIds);
+
+          setAssessmentScores(scoreData || []);
+        } else {
+          setAssessmentScores([]);
+        }
+      }
+
+      const { data: tmplData } = await supabase.from('assessment_templates').select('id, title, default_date');
+      if (tmplData) setTemplates(tmplData);
+    } catch (e) {
+      console.error(e);
     }
+  };
 
-    const acts = (curriculum || []).map((a) => ({
-      id: a.id,
-      name: a.name || a.activity || 'Untitled',
-      category_id: a.curriculum_category_id || a.category_id,
-      area_id: a.curriculum_area_id || a.area_id
-    }));
+  useEffect(() => {
+    fetchAssessments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClassId, classroomStudents.length]);
 
-    return { areas, categories, activities: acts };
-  }, [curriculum, curriculumAreas, curriculumCategories]);
+  const analyticsData = useMemo(() => {
+    const groups = {};
+    (assessments || []).forEach((a) => {
+      const key = `${a.title}_${a.assessment_date}`;
+      if (!groups[key]) groups[key] = { title: a.title, date: a.assessment_date, ids: [], totalStudents: classroomStudents.length };
+      groups[key].ids.push(a.id);
+    });
+
+    return Object.values(groups).map((g) => {
+      const completedCount = g.ids.length;
+      const groupScores = (assessmentScores || []).filter((s) => g.ids.includes(s.assessment_id));
+
+      const areaSums = {};
+      groupScores.forEach((s) => {
+        const val = normalizeScore(s.score_raw);
+        if (val !== null) {
+          const areaName = s.skill?.area?.name || 'General';
+          if (!areaSums[areaName]) areaSums[areaName] = { sum: 0, count: 0 };
+          areaSums[areaName].sum += val;
+          areaSums[areaName].count += 1;
+        }
+      });
+
+      const areaAverages = Object.keys(areaSums)
+        .map((k) => ({ area: k, avg: Math.round(areaSums[k].sum / areaSums[k].count) }))
+        .sort((a, b) => b.avg - a.avg);
+
+      const totalSum = groupScores.reduce((acc, s) => acc + (normalizeScore(s.score_raw) || 0), 0);
+      const validScores = groupScores.filter((s) => normalizeScore(s.score_raw) !== null).length;
+      const overallAvg = validScores > 0 ? Math.round(totalSum / validScores) : 0;
+
+      return { ...g, completedCount, overallAvg, areaAverages };
+    });
+  }, [assessments, assessmentScores, classroomStudents.length]);
+
+  const nextMonthFirstDate = dateISO(new Date(activeD.getFullYear(), activeD.getMonth() + 1, 1));
+  const currMeta = useMemo(
+    () => ({ areas: curriculumAreas || [], categories: curriculumCategories || [], activities: curriculum || [] }),
+    [curriculumAreas, curriculumCategories, curriculum]
+  );
 
   const allClassItems = useMemo(
     () => (planItems || []).filter((i) => String(i.classroom_id) === String(selectedClassId)),
     [planItems, selectedClassId]
   );
 
-  // Current month items (any status except Archived)
+  const { start: monthStart, end: monthEnd } = useMemo(() => monthBounds(activeD), [activeD]);
+
   const baseMonthItems = useMemo(() => {
     return allClassItems.filter((i) => {
       if (isArchivedStatus(i.status)) return false;
-      if (typeof i.year === 'number' && typeof i.month === 'number') return i.year === year && i.month - 1 === monthIdx;
-
-      const d = toDate(i.planning_date) || toDate(safeDate(i.planning_date));
-      if (!d) return false;
-      return d >= monthStart && d < monthEnd;
+      const d = toDate(i.planning_date || safeDate(i.planning_date));
+      return d && d >= monthStart && d < monthEnd;
     });
-  }, [allClassItems, year, monthIdx, monthStart, monthEnd]);
+  }, [allClassItems, monthStart, monthEnd]);
 
-  // Next month Aim items (status A) in next month window
   const aimItems = useMemo(() => {
-    const nextMonth = new Date(year, monthIdx + 1, 1);
-    const { start: nmStart, end: nmEnd } = monthBounds(nextMonth);
-
+    const nextM = new Date(activeD.getFullYear(), activeD.getMonth() + 1, 1);
+    const { start, end } = monthBounds(nextM);
     return allClassItems.filter((i) => {
-      if (isArchivedStatus(i.status)) return false;
       if (normalizeStatusSafe(i.status) !== 'A') return false;
-
-      if (typeof i.year === 'number' && typeof i.month === 'number') {
-        return i.year === nextMonth.getFullYear() && i.month - 1 === nextMonth.getMonth();
-      }
-
-      const d = toDate(i.planning_date) || toDate(safeDate(i.planning_date));
-      if (!d) return false;
-      return d >= nmStart && d < nmEnd;
+      const d = toDate(i.planning_date || safeDate(i.planning_date));
+      return d && d >= start && d < end;
     });
-  }, [allClassItems, year, monthIdx]);
+  }, [allClassItems, activeD]);
 
-  const nextMonthLabel = useMemo(() => fmtMonthLabel(new Date(year, monthIdx + 1, 1)), [year, monthIdx]);
-
-  const filterItems = (items) => {
-    const q = (search || '').toLowerCase().trim();
-
-    return (items || []).filter((i) => {
-      if (areaFilter !== 'ALL') {
-        const a = (i.curriculum_area_name || i.area || '').toString();
-        if (a !== areaFilter) return false;
-      }
-      if (!q) return true;
-
-      const stu = (students || []).find((s) => String(s.id) === String(i.student_id));
-      const stuName = stu ? `${stu.first_name} ${stu.last_name}`.toLowerCase() : '';
-      const hay = [i.activity, i.raw_activity, i.notes, i.curriculum_area_name, i.curriculum_category_name, i.area, stuName].join(' ').toLowerCase();
-      return hay.includes(q);
+  const filteredMonthItems = useMemo(() => {
+    const q = (search || '').toLowerCase();
+    return baseMonthItems.filter((i) => {
+      if (areaFilter !== 'ALL' && i.area !== areaFilter) return false;
+      if (q && !(i.activity || '').toLowerCase().includes(q)) return false;
+      return true;
     });
-  };
+  }, [baseMonthItems, search, areaFilter]);
 
-  const filteredMonthItems = useMemo(() => filterItems(baseMonthItems), [baseMonthItems, search, areaFilter, students]);
-  const filteredAimItems = useMemo(() => filterItems(aimItems), [aimItems, search, areaFilter, students]);
-
-  const areaOptions = useMemo(() => {
+  const areaFilterOptions = useMemo(() => {
     const set = new Set();
-    [...baseMonthItems, ...aimItems].forEach((i) => {
-      const a = (i.curriculum_area_name || i.area || '').trim();
-      if (a) set.add(a);
+    baseMonthItems.forEach((i) => {
+      if (i.area) set.add(i.area);
     });
     return ['ALL', ...Array.from(set).sort()];
-  }, [baseMonthItems, aimItems]);
+  }, [baseMonthItems]);
 
-  const academicStartDate = useMemo(() => {
-    const d = toDate(ACADEMIC_START);
-    if (d) return d;
-    const now = new Date();
-    const y = now.getMonth() < 8 ? now.getFullYear() - 1 : now.getFullYear();
-    return new Date(y, 8, 1);
-  }, []);
-
-  // suggestions: keep strict month filtering (no Jan weeks in Dec)
   const suggestedWeeks = useMemo(() => {
     if (!selectedClassId) return [];
+    const academicStartDate = toDate(ACADEMIC_START) || new Date(new Date().getFullYear(), 8, 1);
 
     const plans = (masterPlans || []).filter((tp) => String(tp.classroom_id) === String(selectedClassId));
-
     const calculatedPlans = plans
       .map((tp) => {
         const wn = parseInt(tp.week_number || 0, 10);
         if (!wn) return null;
-
-        const parsed = parseTermPlanDateRange(tp.date_range, academicStartDate);
-
-        let weekStart = parsed?.start || null;
-        let weekEnd = parsed?.end || null;
-        let rangeLabel = parsed?.label || normalizeDateRangeLabel(tp.date_range);
-
-        if (!weekStart) {
-          weekStart = addDays(academicStartDate, (wn - 1) * 7);
-          weekEnd = addDays(weekStart, 4);
-          rangeLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        } else {
-          if (!weekEnd) weekEnd = addDays(weekStart, 4);
-          if (!rangeLabel) {
-            rangeLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-          }
-        }
-
-        return { ...tp, weekNumber: wn, weekStart, weekEnd, rangeLabel };
+        const weekStart = addDays(academicStartDate, (wn - 1) * 7);
+        const weekEnd = addDays(weekStart, 4);
+        return { ...tp, weekStart, weekEnd };
       })
       .filter(Boolean);
 
-    const monthPlans = calculatedPlans
-      .filter((tp) => hasStrictOverlap(tp.weekStart, monthStart, monthEnd))
-      .sort((a, b) => a.weekNumber - b.weekNumber);
+    const monthPlans = calculatedPlans.filter((tp) => hasStrictOverlap(tp.weekStart, monthStart, monthEnd));
 
     const sessMap = new Map();
     (planSessions || []).forEach((s) => {
-      const id = String(s.term_plan_id || s.plan_id || s.master_plan_id || s.parent_id);
-      if (!id) return;
+      const id = String(s.term_plan_id || s.plan_id);
       if (!sessMap.has(id)) sessMap.set(id, []);
       sessMap.get(id).push(s);
     });
 
-    const weekMap = new Map();
-
+    const output = [];
     monthPlans.forEach((tp) => {
-      const k = String(tp.weekNumber);
-      if (!weekMap.has(k)) weekMap.set(k, { weekNumber: tp.weekNumber, rangeLabel: tp.rangeLabel, bySubject: new Map() });
-
-      const buck = weekMap.get(k);
-      const subj = (tp.subject || 'General').toString();
-      if (!buck.bySubject.has(subj)) buck.bySubject.set(subj, new Map());
-
-      const rawSess = sessMap.get(String(tp.id)) || [];
-      const clean = rawSess.filter((x) => String(x.session_type || '').toUpperCase() !== 'ADMIN');
-
-      const catMap = buck.bySubject.get(subj);
-      clean.forEach((s) => {
-        const c = s.category || s.curriculum_categories?.name || 'Uncategorized';
-        if (!catMap.has(c)) catMap.set(c, []);
-        catMap.get(c).push(s);
-      });
+      const sessions = sessMap.get(String(tp.id)) || [];
+      sessions.forEach((s) => output.push({ ...s, subject: tp.subject }));
     });
 
-    return Array.from(weekMap.values())
-      .sort((a, b) => a.weekNumber - b.weekNumber)
-      .map((w) => ({
-        ...w,
-        subjects: Array.from(w.bySubject.entries())
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([subj, cm]) => ({
-            subject: subj,
-            categories: Array.from(cm.entries())
-              .sort((a, b) => a[0].localeCompare(b[0]))
-              .map(([cat, sess]) => ({
-                category: cat,
-                sessions: sess.sort((a, b) => String(a.session_label || '').localeCompare(String(b.session_label || '')))
-              }))
-          }))
-      }));
-  }, [masterPlans, planSessions, selectedClassId, monthStart, monthEnd, academicStartDate]);
+    return output;
+  }, [masterPlans, planSessions, selectedClassId, monthStart, monthEnd]);
 
-  // Month → Area → Category → BULLETS (no weeks shown)
   const suggestedByArea = useMemo(() => {
-    const areaMap = new Map();
+    const map = {};
+    (suggestedWeeks || []).forEach((s) => {
+      const area = s.subject || 'General';
+      if (!map[area]) map[area] = { subject: area, total: 0, categories: {} };
 
-    (suggestedWeeks || []).forEach((w) => {
-      (w.subjects || []).forEach((s) => {
-        const subject = (s.subject || 'General').toString();
-        if (!areaMap.has(subject)) areaMap.set(subject, { subject, total: 0, categories: new Map() });
+      let catName = s.category;
+      if (!catName && s.curriculum_activity_id && curriculumCategories) {
+        const act = (curriculum || []).find((a) => a.id === s.curriculum_activity_id);
+        if (act) {
+          const catObj = (curriculumCategories || []).find((c) => c.id === act.category_id);
+          if (catObj) catName = catObj.name;
+        }
+      }
 
-        const a = areaMap.get(subject);
-        (s.categories || []).forEach((c) => {
-          const cat = (c.category || 'Uncategorized').toString();
-          if (!a.categories.has(cat)) a.categories.set(cat, { category: cat, bullets: [], __seen: new Set() });
+      const cat = catName || 'Uncategorized';
+      if (!map[area].categories[cat]) map[area].categories[cat] = { category: cat, bullets: [] };
 
-          const bucket = a.categories.get(cat);
-          (c.sessions || []).forEach((sess) => {
-            const txt = (sess.raw_activity || sess.activity || 'Untitled').toString().trim();
-            if (!txt) return;
-
-            const lbl = (sess.session_label || '').toString().trim();
-            const key = dedupeKey(`${txt}__${lbl}`);
-            if (bucket.__seen.has(key)) return;
-            bucket.__seen.add(key);
-
-            bucket.bullets.push({ text: txt, label: lbl });
-            a.total += 1;
-          });
-        });
-      });
+      const txt = s.raw_activity || s.activity;
+      if (txt) {
+        map[area].categories[cat].bullets.push({ text: txt });
+        map[area].total++;
+      }
     });
 
-    const out = Array.from(areaMap.values())
-      .map((a) => {
-        const cats = Array.from(a.categories.values())
-          .map((x) => ({ category: x.category, bullets: x.bullets }))
-          .filter((x) => x.bullets.length > 0)
-          .sort((x, y) => x.category.localeCompare(y.category));
+    return Object.values(map).map((a) => ({
+      ...a,
+      categories: Object.values(a.categories)
+    }));
+  }, [suggestedWeeks, curriculum, curriculumCategories]);
 
-        cats.forEach((c) => c.bullets.sort((p, q) => p.text.localeCompare(q.text)));
-
-        return { subject: a.subject, total: a.total, categories: cats };
-      })
-      .filter((a) => a.total > 0)
-      .sort((a, b) => a.subject.localeCompare(b.subject));
-
-    return out;
-  }, [suggestedWeeks]);
-
-  const goMonth = (d) => setActiveDate(dateISO(new Date(year, monthIdx + d, 1)));
-
-  const openAdd = (s, dateStr = '') => {
-    setAddStatusDefault(s);
-    setAddDefaultDate(dateStr);
+  const openAdd = (status, d) => {
+    setAddStatusDefault(status);
+    setAddDefaultDate(d || dateISO(activeD));
     setAddOpen(true);
   };
 
-  const isAreaOpen = (subject) => {
-    const k = String(subject || '');
-    if (suggestAreaOpenMap[k] !== undefined) return !!suggestAreaOpenMap[k];
-    if (suggestAreaOpenMap.__ALL__ !== undefined) return !!suggestAreaOpenMap.__ALL__;
-    return false; // default collapsed
+  const isAreaOpen = (subject) => suggestAreaOpenMap[subject] ?? false;
+  const toggleArea = (subject) => setSuggestAreaOpenMap((p) => ({ ...p, [subject]: !(p[subject] ?? false) }));
+
+  const setAllSuggestions = (open) => {
+    const next = {};
+    (suggestedByArea || []).forEach((a) => {
+      next[a.subject] = open;
+    });
+    setSuggestAreaOpenMap(next);
   };
 
-  const toggleArea = (subject) => {
-    const k = String(subject || '');
-    setSuggestAreaOpenMap((p) => ({ ...p, [k]: !isAreaOpen(subject) }));
-  };
+  const monthCounts = useMemo(() => {
+    const counts = { P: 0, W: 0, A: 0, M: 0 };
+    baseMonthItems.forEach((i) => {
+      const s = normalizeStatusSafe(i.status);
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [baseMonthItems]);
 
-  // Expand/Collapse ALL applies to BOTH sections: Suggestions + Kanban
-  const handleExpandAll = () => {
-    setSuggestAreaOpenMap({ __ALL__: true });
-    setKanbanExpandAction({ type: 'EXPAND', ts: Date.now() });
-  };
+  const stW = getStatusStyle('W');
+  const stP = getStatusStyle('P');
+  const stA = getStatusStyle('A');
 
-  const handleCollapseAll = () => {
-    setSuggestAreaOpenMap({ __ALL__: false });
-    setKanbanExpandAction({ type: 'COLLAPSE', ts: Date.now() });
-  };
+  const [openAssessMap, setOpenAssessMap] = useState({});
+  const toggleAssess = (key) => setOpenAssessMap((p) => ({ ...p, [key]: !(p[key] ?? false) }));
+  const isAssessOpen = (key) => openAssessMap[key] ?? false;
 
-  const nextMonthFirstDate = dateISO(new Date(year, monthIdx + 1, 1));
+  // -------- Layout spacing constants (more air) --------
+  const GAP_L = 26; // large vertical gaps between sections
+  const GAP_M = 18;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ maxWidth: 1320, margin: '0 auto', padding: '32px 24px 70px', fontFamily: THEME.sansFont, color: THEME.text }}>
       <AddActivityModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -728,268 +848,372 @@ export default function DashboardView({
         showToast={showToast}
       />
 
-      <div style={{ background: '#fff', border: '1px solid rgba(10,53,92,0.08)', borderRadius: 20, padding: 16, boxShadow: softShadow() }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 14 }}>
-          <div style={{ display: 'grid', gap: 14 }}>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {classrooms.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedClassId(c.id)}
-                  style={{
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '12px 20px',
-                    background: String(c.id) === String(selectedClassId) ? THEME.brandPrimary : '#fff',
-                    color: String(c.id) === String(selectedClassId) ? '#fff' : THEME.text,
-                    boxShadow: String(c.id) === String(selectedClassId) ? `6px 6px 0px 0px ${THEME.brandSecondary}` : '2px 2px 0px #eee',
-                    fontWeight: 800,
-                    borderRadius: 0
-                  }}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
+      <BatchAssessmentModal
+        open={batchModalOpen}
+        onClose={() => setBatchModalOpen(false)}
+        students={classroomStudents}
+        templates={templates}
+        classroomId={selectedClassId}
+        onRefresh={fetchAssessments}
+      />
 
-            <div style={{ display: 'flex', gap: 12 }}>
-              {/* UPDATED SEARCH INPUT STYLE */}
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search activity, note, or student…"
-                style={{
-                  flex: 1,
-                  padding: '10px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #eee',
-                  background: '#fff',
-                  fontSize: 13,
-                  color: THEME.text,
-                  outline: 'none'
-                }}
-              />
-              {/* UPDATED SELECT DROPDOWN STYLE */}
-              <select
-                value={areaFilter}
-                onChange={(e) => setAreaFilter(e.target.value)}
-                style={{
-                  padding: '10px 36px 10px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #eee',
-                  background: '#fff',
-                  fontSize: 13,
-                  color: THEME.text,
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                {areaOptions.map((a) => (
-                  <option key={a} value={a}>
-                    {a === 'ALL' ? 'All Areas' : a}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Button variant="ghost" onClick={() => goMonth(-1)}>←</Button>
-            <div style={{ fontWeight: 900 }}>{monthLabel}</div>
-            <Button variant="ghost" onClick={() => goMonth(1)}>→</Button>
-          </div>
+      {/* HEADER (no subtitle, more space) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 18, flexWrap: 'wrap', marginBottom: GAP_M }}>
+        <div>
+          <div style={{ fontFamily: THEME.serifFont, fontSize: 36, fontWeight: 700, color: THEME.text, lineHeight: 1.05 }}>Dashboard</div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
-          <Button variant="ghost" onClick={handleExpandAll}>Expand All</Button>
-          <Button variant="ghost" onClick={handleCollapseAll}>Collapse All</Button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          {(classrooms || []).map((c) => (
+            <ClassroomBtn key={c.id} active={String(c.id) === String(selectedClassId)} label={c.name} onClick={() => setSelectedClassId(c.id)} />
+          ))}
         </div>
       </div>
 
-      {/* Suggestions: Horizontal Cards per Area */}
-      <Card style={{ padding: 18, overflow: 'visible' }}>
-        <div style={{ fontWeight: 900, marginBottom: 14 }}>Suggested from Scope & Sequence - {monthLabel}</div>
-
-        {!suggestedByArea.length ? (
-          <div style={{ color: '#999', fontSize: 13, fontWeight: 600 }}>No suggestions.</div>
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              gap: 16,
-              flexWrap: 'nowrap',
-              overflowX: 'auto',
-              WebkitOverflowScrolling: 'touch',
-              alignItems: 'flex-start',
-              marginLeft: -18,
-              marginRight: -18,
-              paddingLeft: 18,
-              paddingRight: 18,
-              paddingBottom: 40,
-              marginBottom: -20,
-              position: 'relative',
-              zIndex: 10
-            }}
+      {/* Tabs + chips (more breathing room; no extra helper text) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: GAP_L }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Button variant={dashTab === 'daily' ? 'active' : 'primary'} onClick={() => setDashTab('daily')} style={{ padding: '9px 14px', fontSize: 12 }}>
+            Daily Plan
+          </Button>
+          <Button
+            variant={dashTab === 'assessments' ? 'active' : 'primary'}
+            onClick={() => setDashTab('assessments')}
+            style={{ padding: '9px 14px', fontSize: 12 }}
           >
-            {suggestedByArea.map((area) => {
-              const subjStyle = getSubjectStyle ? getSubjectStyle(area.subject) : { border: '#ccc', bg: '#fafafa', text: '#000' };
-              const open = isAreaOpen(area.subject);
+            Assessment Analytics
+          </Button>
+        </div>
 
-              return (
-                <div
-                  key={area.subject}
-                  style={{
-                    flex: '0 0 300px', // Fixed width
-                    minWidth: 300,
-                    border: '1px solid #eee',
-                    borderTop: `4px solid ${subjStyle.border}`,
-                    boxShadow: `4px 4px 0px 0px ${subjStyle.border}40`,
-                    borderRadius: 4,
-                    background: '#fff',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                >
-                  {/* Header */}
-                  <div
-                    onClick={() => toggleArea(area.subject)}
-                    style={{
-                      cursor: 'pointer',
-                      padding: '12px 14px',
-                      background: '#fff',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      borderBottom: open ? `1px solid #f0f0f0` : 'none'
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <div style={{ fontWeight: 800, color: subjStyle.text, fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                        {area.subject}
-                      </div>
-                      <div style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 700 }}>
-                        {area.total} item(s)
-                      </div>
-                    </div>
+        {dashTab === 'daily' && (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <SoftChip dot={stW.dot} label="Practicing" count={monthCounts.W} />
+            <SoftChip dot={stP.dot} label="To Present" count={monthCounts.P} />
+            <SoftChip dot={stA.dot} label="Next Month Aim" count={aimItems.length} />
+          </div>
+        )}
+      </div>
 
-                    <div style={{ fontSize: 14, fontWeight: 900, color: THEME.textMuted }}>
-                      {open ? '−' : '+'}
+      {/* DAILY PLAN */}
+      {dashTab === 'daily' && (
+        <>
+          {/* Month / controls (extra spacing below card) */}
+          <Card style={{ padding: 18, marginBottom: GAP_L }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <IconBtn title="Previous month" onClick={() => setActiveDate(dateISO(new Date(activeD.getFullYear(), activeD.getMonth() - 1, 1)))}>
+                  <ChevronLeft size={18} color={THEME.text} />
+                </IconBtn>
+
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: THEME.textMuted, letterSpacing: 0.6, textTransform: 'uppercase' }}>Month</div>
+                  <div style={{ fontFamily: THEME.serifFont, fontSize: 21, fontWeight: 700, color: THEME.text }}>{monthLabel}</div>
+                </div>
+
+                <IconBtn title="Next month" onClick={() => setActiveDate(dateISO(new Date(activeD.getFullYear(), activeD.getMonth() + 1, 1)))}>
+                  <ChevronRight size={18} color={THEME.text} />
+                </IconBtn>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <Button variant="primary" onClick={() => setActiveDate(dateISO(new Date()))} style={{ padding: '9px 14px', fontSize: 12 }}>
+                  Jump to Current Week
+                </Button>
+
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ width: 240, position: 'relative' }}>
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search activities…" style={{ ...INPUT_BASE, paddingLeft: 34 }} />
+                    <div style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }}>
+                      <Search size={16} color={THEME.textMuted} />
                     </div>
                   </div>
 
-                  {/* Body */}
-                  {open && (
-                    <div style={{ padding: 12, background: '#fff' }}>
+                  <div style={{ width: 180 }}>
+                    <select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} style={SELECT_BASE}>
+                      {areaFilterOptions.map((a) => (
+                        <option key={a} value={a}>
+                          {a === 'ALL' ? 'All areas' : a}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Suggestions header (removed helper subtitle), with more bottom spacing */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: GAP_M }}>
+            <div style={{ fontFamily: THEME.serifFont, fontSize: 21, fontWeight: 700, color: THEME.text }}>Suggested from Scope &amp; Sequence</div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button variant="ghost" onClick={() => setAllSuggestions(true)} style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Expand all
+              </Button>
+              <Button variant="ghost" onClick={() => setAllSuggestions(false)} style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Collapse all
+              </Button>
+            </div>
+          </div>
+
+          {/* Suggestions grid (more gap + more bottom margin) */}
+          <div style={{ marginBottom: GAP_L }}>
+            {suggestedByArea.length === 0 ? (
+              <Card style={{ padding: 20 }}>
+                <div style={{ color: THEME.textMuted, fontWeight: 600 }}>No suggestions for this month.</div>
+              </Card>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
+                {suggestedByArea.map((area) => {
+                  const subj = getSubjectStyle(area.subject);
+                  const open = isAreaOpen(area.subject);
+
+                  return (
+                    <Card key={area.subject} style={{ padding: 0 }}>
                       <div
+                        onClick={() => toggleArea(area.subject)}
                         style={{
-                          maxHeight: 400,
-                          overflowY: 'auto',
-                          paddingRight: 4,
-                          display: 'grid',
-                          gap: 12
+                          cursor: 'pointer',
+                          padding: 16,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 10,
+                          borderBottom: '1px solid #F9F3EF'
                         }}
                       >
-                        {area.categories.map((c) => (
-                          <div key={c.category} style={{ border: '1px solid #f0f0f0', borderRadius: 4, padding: 12, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                            {c.category !== 'Uncategorized' && (
-                              <div style={{ fontSize: 12, fontWeight: 800, color: THEME.text, marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <div style={{ width: 10, height: 10, background: subj.accent }} />
+                          <div style={{ fontWeight: 700, color: THEME.text, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {area.subject}{' '}
+                            <span style={{ opacity: 0.7, fontWeight: 600, marginLeft: 6 }}>({area.total})</span>
+                          </div>
+                        </div>
+                        {open ? <ChevronUp size={18} color={THEME.textMuted} /> : <ChevronDown size={18} color={THEME.textMuted} />}
+                      </div>
+
+                      {open && (
+                        <div style={{ padding: 16, maxHeight: 280, overflowY: 'auto' }}>
+                          {area.categories.map((c) => (
+                            <div key={c.category} style={{ marginBottom: 14 }}>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: THEME.textMuted, marginBottom: 7, textTransform: 'uppercase', letterSpacing: 0.6 }}>
                                 {c.category}
                               </div>
-                            )}
-
-                            <ul style={{ margin: 0, paddingLeft: 18, color: THEME.text, fontSize: 12, fontWeight: 500, display: 'grid', gap: 6 }}>
-                              {c.bullets.map((b, idx) => (
-                                <li key={`${c.category}-${idx}`} style={{ lineHeight: 1.4 }}>
-                                  <div style={{ display: 'inline' }}>
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: THEME.text }}>
+                                {c.bullets.map((b, i) => (
+                                  <li key={i} style={{ marginBottom: 5 }}>
                                     {b.text}
-                                    {b.label ? (
-                                      <span
-                                        style={{
-                                          marginLeft: 6,
-                                          fontSize: 10,
-                                          fontWeight: 700,
-                                          color: THEME.textMuted,
-                                          background: '#f1f3f5',
-                                          border: '1px solid #e9ecef',
-                                          padding: '2px 6px',
-                                          borderRadius: 4,
-                                          display: 'inline-block',
-                                          verticalAlign: 'middle'
-                                        }}
-                                      >
-                                        {b.label}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Kanban (more gap between columns and sections) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 20 }}>
+            <Card style={{ padding: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontFamily: THEME.serifFont, fontSize: 18, fontWeight: 700, color: THEME.text }}>Practicing</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: THEME.textMuted, fontWeight: 600 }}>
+                    {filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'W').length} items
+                  </div>
+                </div>
+                <IconBtn title="Add Practicing" onClick={() => openAdd('W')}>
+                  <Plus size={18} color={THEME.brandYellow} />
+                </IconBtn>
+              </div>
+
+              <KanbanColumn
+                status="W"
+                items={filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'W')}
+                students={students}
+                classrooms={classrooms}
+                selectedClassroomId={selectedClassId}
+                currMeta={currMeta}
+                classroomStudents={classroomStudents}
+                defaultDateISO={dateISO(activeD)}
+                onEditItem={onUpdateItem}
+                onDeleteItem={onDeleteItem}
+                onCreateItem={onQuickAdd}
+                showToast={showToast}
+                embedded={true}
+              />
+            </Card>
+
+            <Card style={{ padding: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontFamily: THEME.serifFont, fontSize: 18, fontWeight: 700, color: THEME.text }}>To Present</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: THEME.textMuted, fontWeight: 600 }}>
+                    {filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'P').length} items
+                  </div>
+                </div>
+                <IconBtn title="Add To Present" onClick={() => openAdd('P')}>
+                  <Plus size={18} color={THEME.brandSecondary} />
+                </IconBtn>
+              </div>
+
+              <KanbanColumn
+                status="P"
+                items={filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'P')}
+                students={students}
+                classrooms={classrooms}
+                selectedClassroomId={selectedClassId}
+                currMeta={currMeta}
+                classroomStudents={classroomStudents}
+                defaultDateISO={dateISO(activeD)}
+                onEditItem={onUpdateItem}
+                onDeleteItem={onDeleteItem}
+                onCreateItem={onQuickAdd}
+                showToast={showToast}
+                embedded={true}
+              />
+            </Card>
+
+            <Card style={{ padding: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontFamily: THEME.serifFont, fontSize: 18, fontWeight: 700, color: THEME.text }}>Next Month Aim</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: THEME.textMuted, fontWeight: 600 }}>{aimItems.length} items</div>
+                </div>
+                <IconBtn title="Add Next Month Aim" onClick={() => openAdd('A', nextMonthFirstDate)}>
+                  <Plus size={18} color={THEME.brandAccent} />
+                </IconBtn>
+              </div>
+
+              <KanbanColumn
+                status="A"
+                items={aimItems}
+                students={students}
+                classrooms={classrooms}
+                selectedClassroomId={selectedClassId}
+                currMeta={currMeta}
+                classroomStudents={classroomStudents}
+                defaultDateISO={nextMonthFirstDate}
+                onEditItem={onUpdateItem}
+                onDeleteItem={onDeleteItem}
+                onCreateItem={onQuickAdd}
+                showToast={showToast}
+                embedded={true}
+              />
+            </Card>
+          </div>
+        </>
+      )}
+
+      {/* ASSESSMENT ANALYTICS (removed helper subtitle; more spacing) */}
+      {dashTab === 'assessments' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: GAP_L }}>
+            <div style={{ fontFamily: THEME.serifFont, fontSize: 21, fontWeight: 700, color: THEME.text }}>Assessment Analytics</div>
+            <Button variant="secondary" onClick={() => setBatchModalOpen(true)}>
+              + New Class Assessment
+            </Button>
+          </div>
+
+          {analyticsData.length === 0 ? (
+            <Card style={{ padding: 28, textAlign: 'center' }}>
+              <div style={{ color: THEME.textMuted, fontWeight: 600 }}>No assessments found. Create one to see analytics.</div>
+            </Card>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 20 }}>
+              {analyticsData.map((data) => {
+                const key = `${data.title}_${data.date}`;
+                const open = isAssessOpen(key);
+                const completionPct = data.totalStudents ? Math.min(100, (data.completedCount / data.totalStudents) * 100) : 0;
+
+                return (
+                  <Card key={key} style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontFamily: THEME.serifFont, fontSize: 20, fontWeight: 700, color: THEME.text, marginBottom: 8 }}>
+                          {data.title}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: THEME.textMuted, fontWeight: 600 }}>
+                          <CalendarIcon size={14} /> {safeDate(data.date)}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 32, fontWeight: 800, color: THEME.text, lineHeight: 1 }}>{data.overallAvg}%</div>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: THEME.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                            Avg
                           </div>
-                        ))}
+                        </div>
+                        <div title={`Completion ${Math.round(completionPct)}%`}>
+                          <ProgressRing pct={completionPct} />
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
-        <KanbanColumn
-          status="W"
-          items={filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'W')}
-          students={students}
-          classrooms={classrooms}
-          selectedClassroomId={selectedClassId}
-          currMeta={currMeta}
-          classroomStudents={classroomStudents}
-          defaultDateISO={dateISO(activeD)}
-          onEditItem={onUpdateItem}
-          onDeleteItem={onDeleteItem}
-          onQuickAdd={() => openAdd('W')}
-          onCreateItem={onQuickAdd}
-          expandAction={kanbanExpandAction}
-          showToast={showToast}
-        />
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 800, color: THEME.textMuted, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                        <span>Completed</span>
+                        <span>
+                          {data.completedCount}/{data.totalStudents}
+                        </span>
+                      </div>
 
-        <KanbanColumn
-          status="P"
-          items={filteredMonthItems.filter((i) => normalizeStatusSafe(i.status) === 'P')}
-          students={students}
-          classrooms={classrooms}
-          selectedClassroomId={selectedClassId}
-          currMeta={currMeta}
-          classroomStudents={classroomStudents}
-          defaultDateISO={dateISO(activeD)}
-          onEditItem={onUpdateItem}
-          onDeleteItem={onDeleteItem}
-          onQuickAdd={() => openAdd('P')}
-          onCreateItem={onQuickAdd}
-          expandAction={kanbanExpandAction}
-          showToast={showToast}
-        />
+                      <div style={{ height: 10, background: '#F9F3EF', border: '1px solid #eee' }}>
+                        <div style={{ height: '100%', width: `${completionPct}%`, background: THEME.brandAccent }} />
+                      </div>
+                    </div>
 
-        <KanbanColumn
-          status="A"
-          columnLabelOverride={`Aim for ${nextMonthLabel}`}
-          items={filteredAimItems}
-          students={students}
-          classrooms={classrooms}
-          selectedClassroomId={selectedClassId}
-          currMeta={currMeta}
-          classroomStudents={classroomStudents}
-          defaultDateISO={nextMonthFirstDate}
-          onEditItem={onUpdateItem}
-          onDeleteItem={onDeleteItem}
-          onQuickAdd={() => openAdd('A', nextMonthFirstDate)}
-          onCreateItem={onQuickAdd}
-          expandAction={kanbanExpandAction}
-          showToast={showToast}
-        />
-      </div>
+                    <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
+                      {data.areaAverages.slice(0, open ? 10 : 4).map((area) => (
+                        <div key={area.area} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 44px', gap: 10, alignItems: 'center' }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {area.area}
+                          </div>
+                          <div style={{ height: 8, background: '#F9F3EF', border: '1px solid #eee' }}>
+                            <div style={{ height: '100%', width: `${area.avg}%`, background: THEME.brandAccent }} />
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: THEME.textMuted, textAlign: 'right' }}>{area.avg}%</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ marginTop: 18, paddingTop: 14, borderTop: '2px solid #F9F3EF', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <Button variant="ghost" onClick={() => toggleAssess(key)} style={{ padding: '6px 10px' }}>
+                        {open ? 'Hide details' : 'Show details'}
+                      </Button>
+
+                      <button
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: THEME.text,
+                          fontFamily: THEME.sansFont,
+                          fontWeight: 800,
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.6,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8
+                        }}
+                      >
+                        Full Report <ArrowRight size={16} />
+                      </button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

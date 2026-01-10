@@ -16,6 +16,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import KanbanColumn from '../components/business/Kanban';
 import EditActivityModal from '../components/business/EditActivityModal';
+import AssessmentPanel from '../components/business/AssessmentPanel';
 
 /** ---------------------------
  * HELPERS
@@ -343,7 +344,6 @@ export default function IndividualPlanner({
   // --- FORCE EXPAND WHEN TAB OR STUDENT CHANGES ---
   useEffect(() => {
     if (tab === 'KANBAN' && selectedId) {
-       // Small timeout to ensure the DOM is ready to receive the expand signal
        const t = setTimeout(() => {
          setExpandAction({ type: 'EXPAND', ts: Date.now() });
        }, 50);
@@ -357,7 +357,7 @@ export default function IndividualPlanner({
     () => students.find((s) => String(s.id) === String(selectedId)),
     [students, selectedId]
   );
-  
+
   const selectedClassroom = useMemo(
     () => classrooms.find((c) => String(c.id) === String(student?.classroom_id)),
     [classrooms, student]
@@ -593,6 +593,7 @@ export default function IndividualPlanner({
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <Button variant={tab === 'KANBAN' ? 'active' : 'ghost'} onClick={() => setTab('KANBAN')}>Montly Plan</Button>
             <Button variant={tab === 'PLAN' ? 'active' : 'ghost'} onClick={() => setTab('PLAN')}>Week Plan</Button>
+            <Button variant={tab === 'ASSESS' ? 'active' : 'ghost'} onClick={() => setTab('ASSESS')}>Assessments</Button>
           </div>
         </div>
 
@@ -621,6 +622,20 @@ export default function IndividualPlanner({
           />
         )}
 
+        {tab === 'ASSESS' && (
+          <AssessmentPanel
+            profile={profile}
+            student={student}
+            classroomId={student?.classroom_id}
+            curriculum={curriculum}
+            currMeta={currMeta}
+            activeDateISO={dateISO(activeDateObj)}
+            nextMonthFirstISO={nextMonthFirstISO}
+            onQuickAdd={onQuickAdd}
+            showToast={showToast}
+          />
+        )}
+
         {tab === 'KANBAN' && (
           <div>
             <Card style={{ padding: 14, marginBottom: 24 }}>
@@ -634,28 +649,27 @@ export default function IndividualPlanner({
                 </div>
 
                 <div style={{ display: 'flex', gap: 10, flex: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
-                   {/* Restored Expand/Collapse buttons for functionality */}
                    <Button variant="ghost" onClick={() => setExpandAction({ type: 'EXPAND', ts: Date.now() })}>Expand</Button>
                    <Button variant="ghost" onClick={() => setExpandAction({ type: 'COLLAPSE', ts: Date.now() })}>Collapse</Button>
-                   
+
                    <div style={{ height: 20, width: 1, background: '#eee', margin: '0 8px' }} />
-                   
+
                    <input
                     value={search} onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search activity..."
                     style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, width: 200 }}
                    />
 
-                   <select 
-                     value={areaFilter} 
+                   <select
+                     value={areaFilter}
                      onChange={(e) => { setAreaFilter(e.target.value); setCatFilter('ALL'); }}
                      style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, maxWidth: 160 }}
                    >
                       {areaFilterOptions.map(o => <option key={o} value={o}>{o === 'ALL' ? 'All Areas' : o}</option>)}
                    </select>
 
-                   <select 
-                     value={catFilter} 
+                   <select
+                     value={catFilter}
                      onChange={(e) => setCatFilter(e.target.value)}
                      style={{ padding: '10px 12px', border: '1px solid #ddd', fontWeight: 600, borderRadius: 12, maxWidth: 160 }}
                    >
@@ -667,7 +681,17 @@ export default function IndividualPlanner({
 
             <div style={{ width: '100%', overflowX: 'auto' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(340px, 1fr))', gap: 18, minWidth: 1080 }}>
-                {/* Passed expandAction (default EXPAND) and props to ensure items render correctly */}
+                              <KanbanColumn
+                  key="W" status="W" items={columnItems.W}
+                  students={students} classrooms={classrooms}
+                  onEditItem={setEditingItem} onDeleteItem={onDeleteItem}
+                  selectedClassroomId={student?.classroom_id} mode="SINGLE_STUDENT"
+                  onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
+                  columnLabelOverride={`Practicing`}
+                  onQuickAdd={() => openAdd('W')}
+                  currMeta={currMeta}
+                  expandAction={expandAction}
+                />
                 <KanbanColumn
                   key="P" status="P" items={columnItems.P}
                   students={students} classrooms={classrooms}
@@ -676,17 +700,6 @@ export default function IndividualPlanner({
                   onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
                   columnLabelOverride={`To Present`}
                   onQuickAdd={() => openAdd('P')}
-                  currMeta={currMeta} 
-                  expandAction={expandAction}
-                />
-                <KanbanColumn
-                  key="W" status="W" items={columnItems.W}
-                  students={students} classrooms={classrooms}
-                  onEditItem={setEditingItem} onDeleteItem={onDeleteItem}
-                  selectedClassroomId={student?.classroom_id} mode="SINGLE_STUDENT"
-                  onMoveItemStatus={onMoveItemStatus} getItemById={(id) => planById.get(String(id))}
-                  columnLabelOverride={`Practicing`}
-                  onQuickAdd={() => openAdd('W')}
                   currMeta={currMeta}
                   expandAction={expandAction}
                 />

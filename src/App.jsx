@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo, useRef, Component } from 'react';
 import { supabase } from './supabaseClient';
 import { useAuth } from './context/AuthContext';
 import LoginScreen from './LoginScreen';
-import WaitingApproval from './WaitingApproval'; 
+import WaitingApproval from './WaitingApproval';
 import { THEME, FontLoader } from './ui/theme';
 
-// ✅ Import the new Admin View
+// ✅ Admin View
 import AdminView from './views/AdminView';
 
 import {
@@ -28,13 +28,13 @@ import Toast from './components/ui/Toast';
 import LoadingScreen from './components/ui/LoadingScreen';
 import NavItem from './components/ui/NavItem';
 
-import DashboardView from './views/DashboardView';
+// ✅ Views
 import MasterTimelineView from './views/MasterTimelineView';
 import IndividualPlanner from './views/IndividualPlanner';
 import ConfigurationView from './views/ConfigurationView';
 
 // ------------------------
-// Error Boundary (prevents blank screen)
+// Error Boundary
 // ------------------------
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -259,7 +259,7 @@ export default function App() {
 
   const [viewState, setViewState] = useState('HOME');
 
-  // keep as ISO string ALWAYS (prevents Date/String mismatches)
+  // keep as ISO string ALWAYS
   const [activeDate, setActiveDate] = useState(dateISO(new Date()));
 
   const [toast, setToast] = useState(null);
@@ -274,7 +274,7 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   };
 
-  // ✅ New State for Multi-School Handling
+  // ✅ Multi-School
   const [schools, setSchools] = useState([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState(null);
 
@@ -286,8 +286,8 @@ export default function App() {
   const [curriculumAreas, setCurriculumAreas] = useState([]);
   const [curriculumCategories, setCurriculumCategories] = useState([]);
 
-  const [masterPlans, setMasterPlans] = useState([]);       // term_plans
-  const [planSessions, setPlanSessions] = useState([]);   // term_plan_sessions
+  const [masterPlans, setMasterPlans] = useState([]);
+  const [planSessions, setPlanSessions] = useState([]);
 
   const [initialLoading, setInitialLoading] = useState(true);
 
@@ -303,7 +303,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 1. Initial Load: Get Schools for the Customer
+  // If something still tries to route to DASHBOARD, send home (prevents dead state)
+  useEffect(() => {
+    if (viewState === 'DASHBOARD') setViewState('HOME');
+  }, [viewState]);
+
+  // 1) init schools
   useEffect(() => {
     if (!user || !profile) return;
     const status = user.user_metadata?.status;
@@ -313,28 +318,22 @@ export default function App() {
     }
 
     async function initSchools() {
-      // If profile has a customer_id, fetch schools for that customer
-      // If not (legacy/superuser), fetch all schools or handle gracefully
       let query = supabase.from('schools').select('*').order('name');
-      
-      if (profile.customer_id) {
-        query = query.eq('customer_id', profile.customer_id);
-      }
+      if (profile.customer_id) query = query.eq('customer_id', profile.customer_id);
 
       const { data, error } = await query;
       if (!error && data?.length > 0) {
         setSchools(data);
-        // Default to first school if none selected
         setSelectedSchoolId(data[0].id);
       } else {
-        setInitialLoading(false); // No schools found
+        setInitialLoading(false);
       }
     }
 
     initSchools();
   }, [user, profile]);
 
-  // 2. Main Data Load: Triggers when selectedSchoolId changes
+  // 2) load school data
   useEffect(() => {
     if (!selectedSchoolId) return;
 
@@ -343,7 +342,6 @@ export default function App() {
 
     async function loadSchoolData() {
       try {
-        // Core tables first - Filtered by School ID where applicable
         const [cls, acts, areas, cats, tPlans] = await Promise.all([
           supabase.from('classrooms').select('*').eq('school_id', selectedSchoolId).order('name'),
           supabase.from('curriculum_activities').select('*').order('sort_order'),
@@ -354,7 +352,6 @@ export default function App() {
 
         if (!alive) return;
 
-        // prime curriculum cache (used by enrichCurrRefs)
         primeCurrCache({
           activities: acts.data || [],
           areas: areas.data || [],
@@ -364,10 +361,9 @@ export default function App() {
         const loadedClassrooms = cls.data || [];
         setClassrooms(loadedClassrooms);
 
-        // Fetch students ONLY for these classrooms
         const classroomIds = loadedClassrooms.map(c => c.id);
         let loadedStudents = [];
-        
+
         if (classroomIds.length > 0) {
           const stus = await supabase.from('students').select('*').in('classroom_id', classroomIds).order('first_name');
           loadedStudents = stus.data || [];
@@ -376,20 +372,15 @@ export default function App() {
 
         setCurriculumAreas(areas.data || []);
         setCurriculumCategories(cats.data || []);
-
         setCurriculum((acts.data || []).map(enrichCurrRefs));
-        
-        // Filter master plans by the loaded classrooms (if they have classroom linkage)
-        // Note: term_plans usually link to classroom_id
-        const relevantPlans = (tPlans.data || []).filter(tp => 
-           !tp.classroom_id || classroomIds.includes(tp.classroom_id)
+
+        const relevantPlans = (tPlans.data || []).filter(tp =>
+          !tp.classroom_id || classroomIds.includes(tp.classroom_id)
         );
         setMasterPlans(relevantPlans);
 
-        // Render UI now (avoid tunnel “stuck loading”)
         setInitialLoading(false);
 
-        // Heavy tables in background
         loadHeavyInBackground(classroomIds);
       } catch (e) {
         console.error('Core Data Load Error', e);
@@ -406,19 +397,16 @@ export default function App() {
       }
 
       try {
-        // Fetch plan items only for relevant classrooms
         const allPlanItems = await fetchAllRows((from, to) =>
           supabase
             .from('plan_items')
             .select('*')
-            .in('classroom_id', classroomIds) // ✅ Filter by School's Classrooms
+            .in('classroom_id', classroomIds)
             .neq('status', 'Archived')
             .order('id', { ascending: true })
             .range(from, to)
         );
 
-        // Fetch term plan sessions (a bit harder to filter, usually linked via plan_id -> classroom)
-        // For optimization we fetch all, or filter by plan IDs if we had them list readily available
         const allTermSessions = await fetchAllRows((from, to) =>
           supabase
             .from('term_plan_sessions')
@@ -444,7 +432,7 @@ export default function App() {
 
     loadSchoolData();
     return () => { alive = false; };
-  }, [selectedSchoolId]); // Re-run when school changes
+  }, [selectedSchoolId]);
 
   const handleQuickAdd = async (payload) => {
     const student = students.find(s => s.id == payload.student_id);
@@ -543,9 +531,6 @@ export default function App() {
   if (loading) return <LoadingScreen />;
   if (!user) return <LoginScreen />;
 
-  // ----------------------------------------------------
-  // ✅ GATEKEEPER: Block Pending Users
-  // ----------------------------------------------------
   if (user.user_metadata?.status === 'pending') {
     return <WaitingApproval user={user} onLogout={signOut} />;
   }
@@ -581,7 +566,6 @@ export default function App() {
           viewState={viewState}
           onNavigate={setViewState}
           onSignOut={signOut}
-          // ✅ Pass School Switching Props
           schools={schools}
           selectedSchoolId={selectedSchoolId}
           onSchoolChange={setSelectedSchoolId}
@@ -599,26 +583,7 @@ export default function App() {
           <ErrorBoundary>
             {viewState === 'HOME' && <HomeMenu userName={firstName} onNavigate={setViewState} />}
 
-            {viewState === 'DASHBOARD' && (
-              <DashboardView
-                planItems={planItems}
-                students={students}
-                classrooms={classrooms}
-                activeDate={activeDate}
-                setActiveDate={setActiveDate}
-                onUpdateItem={handleUpdateItem}
-                onDeleteItem={handleDeleteItem}
-                onMoveItemToDate={handleMoveItemToDate}
-                curriculum={curriculum}
-                curriculumAreas={curriculumAreas}
-                curriculumCategories={curriculumCategories}
-                masterPlans={masterPlans}
-                planSessions={planSessions}
-                showToast={showToast}
-                openQuickAdd={() => setQuickAddOpen(true)}
-                onQuickAdd={handleQuickAdd}
-              />
-            )}
+            {/* ✅ DASHBOARD HIDDEN FOR NOW */}
 
             {viewState === 'YEARLY' && (
               <MasterTimelineView
@@ -656,7 +621,6 @@ export default function App() {
 
             {viewState === 'CONFIG' && <ConfigurationView isReadOnly={!isSupervisor} />}
 
-            {/* ✅ Render the Admin View when selected */}
             {viewState === 'ADMIN' && <AdminView />}
           </ErrorBoundary>
         </div>
@@ -666,13 +630,13 @@ export default function App() {
 }
 
 // ------------------------
-// SIDEBAR (with School Switcher)
+// SIDEBAR (Dashboard removed)
 // ------------------------
-function Sidebar({ 
-  firstName, 
-  profile, 
-  viewState, 
-  onNavigate, 
+function Sidebar({
+  firstName,
+  profile,
+  viewState,
+  onNavigate,
   onSignOut,
   schools,
   selectedSchoolId,
@@ -680,21 +644,11 @@ function Sidebar({
 }) {
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
 
-  // ✅ SAFE LOGOUT HANDLER (Prevents 403 freeze)
   const handleSafeSignOut = async () => {
-    // Attempt normal sign out
     const { error } = await supabase.auth.signOut();
-    
-    // Log error if any (usually 403 Forbidden if session expired)
     if (error) console.log("Logout error (ignored):", error.message);
-
-    // 🔥 WIPE LOCAL STORAGE
     localStorage.clear();
-
-    // Force UI callback
     if (onSignOut) onSignOut();
-    
-    // Hard redirect to clean state
     window.location.href = '/';
   };
 
@@ -710,7 +664,6 @@ function Sidebar({
           </div>
         </div>
 
-        {/* ✅ SCHOOL SELECTOR OR NAME */}
         {schools && schools.length > 1 ? (
           <div style={{ marginBottom: 10 }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: THEME.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -752,20 +705,22 @@ function Sidebar({
 
       <div style={{ padding: '10px 0', flex: 1 }}>
         <NavItem label="Home" active={viewState === 'HOME'} onClick={() => onNavigate('HOME')} />
-        <NavItem label="Dashboard" active={viewState === 'DASHBOARD'} onClick={() => onNavigate('DASHBOARD')} />
+
+        {/* ✅ DASHBOARD REMOVED */}
+
         <NavItem label="Scope & Sequence" active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')} />
         <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} />
         <NavItem label="Configuration" active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} />
-        
+
         {isSupervisor && (
-           <NavItem label="Admin Panel" active={viewState === 'ADMIN'} onClick={() => onNavigate('ADMIN')} />
+          <NavItem label="Admin Panel" active={viewState === 'ADMIN'} onClick={() => onNavigate('ADMIN')} />
         )}
       </div>
 
       <div style={{ padding: 22 }}>
-        <Button 
-          variant="ghost" 
-          onClick={handleSafeSignOut} 
+        <Button
+          variant="ghost"
+          onClick={handleSafeSignOut}
           style={{ width: '100%', border: '1px solid #eee', fontWeight: 500 }}
         >
           Sign Out
@@ -776,7 +731,7 @@ function Sidebar({
 }
 
 // ------------------------
-// HOME MENU (unchanged)
+// HOME MENU (Dashboard card removed)
 // ------------------------
 function HomeMenu({ userName, onNavigate }) {
   return (
@@ -794,9 +749,8 @@ function HomeMenu({ userName, onNavigate }) {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 30 }}>
           <HomeCard icon="🎓" title="Individual Plans" desc="Student tracking, reports and progress boards." onClick={() => onNavigate('INDIVIDUAL')} color={THEME.brandAccent} />
-          <HomeCard icon="📊" title="Dashboard" desc="Monthly overview + weekly planning." onClick={() => onNavigate('DASHBOARD')} color={THEME.brandSecondary} />
           <HomeCard icon="🗺️" title="Scope & Sequence" desc="Yearly timeline, themes and lessons." onClick={() => onNavigate('YEARLY')} color={THEME.brandYellow} />
-          <HomeCard icon="⚙️" title="Configuration" desc="Manage classrooms, students, and roles." onClick={() => onNavigate('CONFIG')} color="#ddd" />
+          <HomeCard icon="⚙️" title="Configuration" desc="Manage classrooms, students, roles, and assessments." onClick={() => onNavigate('CONFIG')} color="#ddd" />
         </div>
       </div>
     </div>
