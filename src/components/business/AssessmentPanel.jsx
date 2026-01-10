@@ -365,9 +365,6 @@ export default function AssessmentPanel({ profile, student, classroomId, showToa
             <option value="ALL">All Areas</option>
             {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          <Button onClick={() => setCreateOpen(true)} style={{ background: THEME.brandPrimary, color: '#fff', fontWeight: 700, border: 'none' }}>
-            + New Assessment
-          </Button>
         </div>
       </div>
 
