@@ -492,12 +492,15 @@ export default function WeeklyCoordinationView({ profile, showToast, selectedSch
             >
               <ListTodo size={16} /> Action Items Tracker
             </button>
-            <button 
-              onClick={() => setActiveView('PLANNING')}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, background: activeView === 'PLANNING' ? UI.primary : 'transparent', color: activeView === 'PLANNING' ? '#fff' : UI.muted, border: `1px solid ${activeView === 'PLANNING' ? UI.primary : 'transparent'}`, padding: '8px 16px', borderRadius: SQUARE_RADIUS, fontSize: 13, fontWeight: activeView === 'PLANNING' ? 600 : 500, cursor: 'pointer', transition: 'all 0.2s' }}
-            >
-              <CalendarDays size={16} /> Weekly Plan
-            </button>
+<button 
+  onClick={() => {
+    setActiveView('PLANNING');
+    setActiveWeek(getWeekFromDate(getDynamicDate())); // Resets to current week
+  }}
+  style={{ display: 'flex', alignItems: 'center', gap: 8, background: activeView === 'PLANNING' ? UI.primary : 'transparent', color: activeView === 'PLANNING' ? '#fff' : UI.muted, border: `1px solid ${activeView === 'PLANNING' ? UI.primary : 'transparent'}`, padding: '8px 16px', borderRadius: SQUARE_RADIUS, fontSize: 13, fontWeight: activeView === 'PLANNING' ? 600 : 500, cursor: 'pointer', transition: 'all 0.2s' }}
+>
+  <CalendarDays size={16} /> Add New Meeting
+</button>
           </div>
 
           {/* WARNINGS */}

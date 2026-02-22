@@ -30,8 +30,6 @@ import {
   MessageSquare,
   Target,
   ChevronDown,
-  AlertTriangle,
-  Hexagon
 } from 'lucide-react';
 
 import { supabase } from '../supabaseClient';
@@ -68,9 +66,9 @@ const UI = {
 
 const SQUARE_RADIUS = '0px';
 
-function pad2(n) { return String(n).padStart(2, '0'); }
+const pad2 = (n) => String(n).padStart(2, '0');
 
-function toDateObj(v) {
+const toDateObj = (v) => {
   if (!v) return new Date();
   if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
     const d = new Date(`${v.slice(0, 10)}T00:00:00`);
@@ -78,21 +76,21 @@ function toDateObj(v) {
   }
   const d = new Date(v);
   return isNaN(d.getTime()) ? new Date() : d;
-}
+};
 
-function getItemDateObj(it) {
+const getItemDateObj = (it) => {
   const d =
     toDateObj(it?.planning_date) ||
     toDateObj(it?.date) ||
     (it?.year && it?.month ? new Date(Number(it.year), Number(it.month) - 1, Number(it.day || 1), 0, 0, 0) : null);
   return d && !isNaN(d.getTime()) ? d : null;
-}
+};
 
-function monthKeyFromDate(d) { return d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}` : null; }
-function firstOfMonthISO(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`; }
-function addMonths(dateObj, n) { const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1, 0, 0, 0); d.setMonth(d.getMonth() + n); return d; }
+const monthKeyFromDate = (d) => d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}` : null;
+const firstOfMonthISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`;
+const addMonths = (dateObj, n) => { const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1, 0, 0, 0); d.setMonth(d.getMonth() + n); return d; };
 
-function normStatus(raw) {
+const normStatus = (raw) => {
   const s = String(raw || '').trim().toUpperCase();
   if (s === 'P' || s === 'W' || s === 'M' || s === 'A' || s === 'S') return s;
   const n = s.toLowerCase().replace(/[_-]/g, ' ').trim();
@@ -100,25 +98,26 @@ function normStatus(raw) {
   if (n.includes('master') || n.includes('done')) return 'M';
   if (n.includes('aim') || n.includes('next month')) return 'A';
   return 'P';
-}
+};
 
-function clean(s) { return String(s || '').trim(); }
-function iso10(v) { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; }
-function parseId(id) { return id && id !== 'CUSTOM' ? Number(id) : null; }
+const clean = (s) => String(s || '').trim();
+const iso10 = (v) => { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; };
+const parseId = (id) => id && id !== 'CUSTOM' ? Number(id) : null;
 const normKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-const isArchived = (p) => String(p?.entry_type || '').toLowerCase() === 'archived';
+// entry_type is an enum; do NOT set to random values like "archived"
+const isArchived = () => false;
 
-function getBusinessDayISO() {
+const getBusinessDayISO = () => {
   const d = new Date();
   const day = d.getDay();
-  if (day === 6) d.setDate(d.getDate() + 2); 
-  if (day === 0) d.setDate(d.getDate() + 1); 
+  if (day === 6) d.setDate(d.getDate() + 2); // Sat -> Mon
+  if (day === 0) d.setDate(d.getDate() + 1); // Sun -> Mon
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const dNum = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dNum}`;
-}
+};
 
 const parseBorder = (b) => b ? b.split(' ')[2] || b : UI.border;
 const statusConfig = {
@@ -130,104 +129,9 @@ const statusConfig = {
 
 const DISPLAY_SUBJECTS = SUBJECT_KEYS.filter(s => s.toLowerCase() !== 'practical life');
 
-/** ---------------------------
- * CUSTOM SEARCHABLE DROPDOWN
- * --------------------------- */
-const SearchableSelect = ({ options, value, onChange, placeholder, allowCustom = false }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const wrapperRef = useRef(null);
-
-  useEffect(() => {
-    if (!isOpen) {
-      const selected = options.find(o => String(o.id) === String(value));
-      setSearch(selected ? selected.name : (value || ''));
-    }
-  }, [value, options, isOpen]);
-
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
-        setIsOpen(false);
-        if (!allowCustom) {
-          const selected = options.find(o => String(o.id) === String(value));
-          setSearch(selected ? selected.name : '');
-        } else if (search && search !== value) {
-          onChange(search); 
-        }
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [search, value, allowCustom, options, onChange]);
-
-  const filtered = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
-
-  return (
-    <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
-      <div style={{ position: 'relative' }}>
-        <input
-          type="text"
-          value={search}
-          placeholder={placeholder}
-          onFocus={() => setIsOpen(true)}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setIsOpen(true);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              if (filtered.length > 0) {
-                onChange(filtered[0].id);
-                setSearch(filtered[0].name);
-              } else if (allowCustom && search.trim()) {
-                onChange(search.trim());
-              }
-              setIsOpen(false);
-            }
-          }}
-          style={{
-            width: '100%', padding: '10px 32px 10px 12px', borderRadius: SQUARE_RADIUS,
-            border: `1px solid ${isOpen ? UI.primary : UI.border}`, height: '38px',
-            fontSize: 13, fontWeight: 400, outline: 'none', boxSizing: 'border-box',
-            fontFamily: THEME.sansFont, color: UI.text, backgroundColor: '#fff',
-            boxShadow: isOpen ? `0 0 0 2px ${rgba(UI.primary, 0.05)}` : 'none',
-            transition: 'all 0.2s'
-          }}
-        />
-        <ChevronDown size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: UI.muted, pointerEvents: 'none' }} />
-      </div>
-
-      {isOpen && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50,
-          background: '#fff', border: `1px solid ${UI.border}`, borderRadius: SQUARE_RADIUS,
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.05)', maxHeight: 220, overflowY: 'auto'
-        }}>
-          {filtered.length > 0 ? filtered.map(o => (
-            <div
-              key={o.id}
-              onClick={() => {
-                onChange(o.id);
-                setSearch(o.name);
-                setIsOpen(false);
-              }}
-              style={{ padding: '10px 12px', fontSize: 13, fontWeight: 400, cursor: 'pointer', fontFamily: THEME.sansFont, borderBottom: `1px solid #f3f4f6`, background: '#fff' }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#f9fafb'}
-              onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
-            >
-              {o.name}
-            </div>
-          )) : (
-            <div style={{ padding: '10px 12px', fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>
-              {allowCustom ? 'Press Enter to add custom name' : 'No matches found'}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+const getRawFirstTitle = (it) => {
+  const norm = getNormalizedItem(it || {});
+  return clean(it?.raw_activity) || clean(norm?.rawActivity) || clean(it?.activity) || clean(norm?.title) || 'Untitled Activity';
 };
 
 /** ---------------------------
@@ -365,7 +269,7 @@ const SmallChip = ({ active, children, onClick, tone = 'default', title }) => {
     aim: { bg: statusConfig.A.bg, text: statusConfig.A.color, border: statusConfig.A.border },
   };
   const t = tones[tone] || tones.default;
-  
+
   return (
     <button
       title={title}
@@ -394,10 +298,24 @@ const StatusChips = ({ value, onSet, onRevert, compact = false }) => {
       {onRevert && (
         <button
           onClick={(e) => { e.stopPropagation(); onRevert(); }}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#fca5a5', padding: '4px', marginLeft: 4, display: 'flex', alignItems: 'center' }}
+          style={{
+            border: `1px solid ${rgba(UI.danger, 0.35)}`,
+            background: '#fff',
+            cursor: 'pointer',
+            color: UI.danger,
+            padding: '4px 10px',
+            borderRadius: SQUARE_RADIUS,
+            marginLeft: 4,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            fontFamily: THEME.sansFont,
+            fontSize: 12,
+            fontWeight: 700,
+          }}
           title="Return to Suggestions"
         >
-          <Undo2 size={16} />
+          <Undo2 size={14} /> Back
         </button>
       )}
     </div>
@@ -425,40 +343,35 @@ const ActionStatusPill = ({ status, onClick, style }) => {
   );
 };
 
-
 /** ---------------------------
- * CLEAN PLAN CARD
+ * PLAN CARD
+ * - ALWAYS show raw_activity first
+ * - Allow quick date set
  * --------------------------- */
-const PlanCard = ({ item, onEdit, onStatus, onRevert }) => {
-  const norm = getNormalizedItem(item);
-  
-  // Prioritize raw_activity (specific teacher notes) over official activity (category)
-  const specificName = clean(item.raw_activity) || clean(norm.rawActivity);
-  const categoryName = clean(item.activity) || clean(norm.title);
-  
-  const title = specificName || categoryName || 'Untitled Activity';
-  const subtitle = specificName && categoryName && specificName.toLowerCase() !== categoryName.toLowerCase() ? categoryName : null;
+const PlanCard = ({ item, onEdit, onStatus, onRevert, onDate }) => {
+  const title = getRawFirstTitle(item);
 
+  const norm = getNormalizedItem(item);
   const areaName = norm.area || item.area || 'General';
   const subjStyle = getSubjectStyle(areaName);
+
+  const [dateMode, setDateMode] = useState(false);
+  const pd = iso10(item.planning_date || item.date || '');
+  const shownDate = pd ? safeDate(pd) : 'Set date';
 
   return (
     <div
       onClick={() => onEdit?.(item)}
       style={{
         background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderLeft: `4px solid ${subjStyle.accent || UI.primary}`,
-        padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.2s ease',
+        padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, cursor: 'pointer',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.2s ease',
       }}
       onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.05)')}
       onMouseLeave={(e) => (e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.02)')}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
         <div style={{ minWidth: 0, width: '100%' }}>
-          {subtitle && (
-            <div style={{ fontSize: 10, color: UI.muted, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              {subtitle}
-            </div>
-          )}
           <div style={{ fontSize: 13, fontWeight: 500, color: UI.text, lineHeight: 1.4, wordBreak: 'break-word' }}>
             {title}
           </div>
@@ -471,9 +384,48 @@ const PlanCard = ({ item, onEdit, onStatus, onRevert }) => {
       </div>
 
       <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 4, borderTop: `1px solid ${UI.border}`, paddingTop: 12 }}>
-        <div style={{ fontSize: 11, color: UI.muted, fontWeight: 500 }}>
-          {iso10(item.planning_date) ? safeDate(iso10(item.planning_date)) : '—'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {!dateMode ? (
+            <button
+              onClick={() => setDateMode(true)}
+              style={{
+                border: `1px solid ${UI.border}`,
+                background: '#fff',
+                borderRadius: SQUARE_RADIUS,
+                padding: '4px 10px',
+                fontSize: 12,
+                color: UI.muted,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontFamily: THEME.sansFont,
+                fontWeight: 600,
+              }}
+              title="Set / change date"
+            >
+              <CalendarDays size={14} /> {shownDate}
+            </button>
+          ) : (
+            <input
+              type="date"
+              value={pd}
+              onChange={(e) => onDate?.(iso10(e.target.value) || null)}
+              onBlur={() => setDateMode(false)}
+              style={{
+                height: 30,
+                borderRadius: SQUARE_RADIUS,
+                border: `1px solid ${UI.border}`,
+                padding: '0 10px',
+                fontFamily: THEME.sansFont,
+                fontSize: 12,
+                color: UI.text,
+              }}
+              autoFocus
+            />
+          )}
         </div>
+
         <StatusChips value={item.status} onSet={onStatus} onRevert={onRevert} compact />
       </div>
     </div>
@@ -481,25 +433,30 @@ const PlanCard = ({ item, onEdit, onStatus, onRevert }) => {
 };
 
 /** ---------------------------
- * SCOPE CARD (UNPLANNED/SUGGESTIONS ONLY)
+ * SCOPE CARD (SUGGESTIONS)
+ * - Show raw_activity / session_label / teacher_notes first
  * --------------------------- */
 const ScopeCard = ({ session, onCreateOrUpdate }) => {
   const areaName = session?.curriculum_areas?.name || session.area || 'General';
   const subjStyle = getSubjectStyle(areaName);
 
-  // Prioritize raw_activity (specific teacher notes) over official activity (category)
-  const specificName = clean(session?.raw_activity) || clean(session?.session_label) || clean(session?.teacher_notes);
-  const categoryName = clean(session?.curriculum_activities?.name) || clean(session?.activity);
-  
-  const title = specificName || categoryName || 'Untitled Activity';
-  const subtitle = specificName && categoryName && specificName.toLowerCase() !== categoryName.toLowerCase() ? categoryName : null;
+  const title =
+    clean(session?.raw_activity) ||
+    clean(session?.session_label) ||
+    clean(session?.teacher_notes) ||
+    clean(session?.curriculum_activities?.name) ||
+    clean(session?.activity) ||
+    'Activity';
 
   return (
     <div
       style={{
-        background: session.is_this_week ? '#FFFCF8' : '#fff', borderRadius: SQUARE_RADIUS,
-        border: `1px solid ${session.is_this_week ? rgba(UI.accentYellow, 0.6) : UI.border}`, borderLeft: `4px solid ${subjStyle.accent || UI.primary}`,
-        padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.2s ease',
+        background: session.is_this_week ? '#FFFCF8' : '#fff',
+        borderRadius: SQUARE_RADIUS,
+        border: `1px solid ${session.is_this_week ? rgba(UI.accentYellow, 0.6) : UI.border}`,
+        borderLeft: `4px solid ${subjStyle.accent || UI.primary}`,
+        padding: '16px', display: 'flex', flexDirection: 'column', gap: 12,
+        boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.2s ease',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
@@ -509,11 +466,7 @@ const ScopeCard = ({ session, onCreateOrUpdate }) => {
               <Star size={12} fill={UI.accentYellow} color={UI.accentYellow} /> Suggested This Week
             </div>
           )}
-          {subtitle && (
-            <div style={{ fontSize: 10, color: UI.muted, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              {subtitle}
-            </div>
-          )}
+
           <div style={{ fontSize: 13, fontWeight: 500, color: UI.text, lineHeight: 1.4, wordBreak: 'break-word' }}>
             {title}
           </div>
@@ -533,12 +486,373 @@ const ScopeCard = ({ session, onCreateOrUpdate }) => {
 };
 
 /** ---------------------------
- * ADD & EDIT MODALS
+ * MONTHLY KANBAN BOARD
  * --------------------------- */
-function AddActivityModal({ open, onClose, onSubmit, classrooms = [], students = [], curriculum = [], curriculumAreas = [], curriculumCategories = [], defaults = {}, showToast }) {
+const MonthlyBoard = ({
+  student,
+  studentPlans,
+  masterPlans,
+  planSessions,
+  activeDateObj,
+  onCreateFromScope,
+  onUpdatePlanItemStatus,
+  onUpdatePlanItemDate,
+  setEditingItem,
+  onReturnToSuggestions,
+  boardFilterArea,
+  deletedIdsSet,
+}) => {
+  const currentMonthKey = monthKeyFromDate(activeDateObj);
+
+  const planItemsNoTasks = useMemo(
+    () =>
+      studentPlans
+        .filter((p) => !['Tasks', 'Observations'].includes(getNormalizedItem(p).area))
+        .filter((p) => !isArchived(p))
+        .filter((p) => !deletedIdsSet.has(String(p.id)))
+        .filter((p) => boardFilterArea === 'ALL' || getNormalizedItem(p).area === boardFilterArea),
+    [studentPlans, boardFilterArea, deletedIdsSet]
+  );
+
+  const planIndex = useMemo(() => {
+    const byCurrAct = new Map();
+    const byNormName = new Map();
+    for (const p of planItemsNoTasks) {
+      if (p.curriculum_activity_id) byCurrAct.set(String(p.curriculum_activity_id), p);
+
+      const n = getNormalizedItem(p);
+      const names = [p.activity_norm, p.raw_activity, p.activity, n.rawActivity, n.title].map(clean).filter(Boolean);
+      for (const name of names) {
+        const key = normKey(name);
+        if (key && !byNormName.has(key)) byNormName.set(key, p);
+      }
+    }
+    return { byCurrAct, byNormName };
+  }, [planItemsNoTasks]);
+
+  const linkPlanItem = (session) => {
+    if (session.curriculum_activity_id && planIndex.byCurrAct.has(String(session.curriculum_activity_id))) {
+      return planIndex.byCurrAct.get(String(session.curriculum_activity_id));
+    }
+    const names = [
+      session.raw_activity,
+      session.activity,
+      session.curriculum_activities?.name,
+      session.session_label
+    ].map(clean).filter(Boolean);
+
+    for (const name of names) {
+      const key = normKey(name);
+      if (key && planIndex.byNormName.has(key)) return planIndex.byNormName.get(key);
+    }
+    return null;
+  };
+
+  const unplannedScopeSessions = useMemo(() => {
+    const weeksInMonth = new Set();
+    for (let day = 1; day <= 28; day++) {
+      weeksInMonth.add(getWeekFromDate(dateISO(new Date(activeDateObj.getFullYear(), activeDateObj.getMonth(), day))));
+    }
+
+    const currentWeekNum = getWeekFromDate(getBusinessDayISO());
+
+    const plans = (masterPlans || [])
+      .filter((p) => weeksInMonth.has(Number(p.week_number)) && String(p.classroom_id) === String(student.classroom_id));
+    const planMap = new Map(plans.map((p) => [String(p.id), p]));
+    const planIds = new Set(planMap.keys());
+
+    const sessions = (planSessions || [])
+      .filter((s) => planIds.has(String(s.plan_id)))
+      .filter((s) => !!s.curriculum_activity_id)
+      .filter((s) => {
+        const areaName = (s.curriculum_areas?.name || s.area || '').trim();
+        if (areaName.toLowerCase() === 'tasks' || areaName.toLowerCase() === 'observations') return false;
+
+        const catName = (s.curriculum_categories?.name || s.category || '').trim().toLowerCase();
+        if (catName === 'general') return false;
+
+        if (boardFilterArea !== 'ALL' && areaName !== boardFilterArea) return false;
+        return true;
+      });
+
+    const uniq = new Map();
+    sessions.forEach((s) => {
+      // Show in suggestions only if NOT already planned
+      if (!linkPlanItem(s)) {
+        const parentPlan = planMap.get(String(s.plan_id));
+        const enrichedSession = {
+          ...s,
+          is_this_week: parentPlan && Number(parentPlan.week_number) === currentWeekNum
+        };
+
+        if (s?.id) uniq.set(String(s.id), enrichedSession);
+        else uniq.set(`${s.plan_id}-${s.curriculum_activity_id || ''}-${s.raw_activity || s.activity || ''}`, enrichedSession);
+      }
+    });
+
+    return Array.from(uniq.values()).sort((a, b) => {
+      return (b.is_this_week === true ? 1 : 0) - (a.is_this_week === true ? 1 : 0);
+    });
+  }, [masterPlans, planSessions, activeDateObj, student.classroom_id, planIndex, boardFilterArea]);
+
+  const monthGroups = useMemo(() => {
+    const currMonth = planItemsNoTasks.filter((it) => monthKeyFromDate(getItemDateObj(it)) === currentMonthKey);
+    return {
+      P: currMonth.filter((it) => normStatus(it.status) === 'P'),
+      W: currMonth.filter((it) => normStatus(it.status) === 'W'),
+      M: currMonth.filter((it) => normStatus(it.status) === 'M'),
+      A: currMonth.filter((it) => normStatus(it.status) === 'A'),
+    };
+  }, [planItemsNoTasks, currentMonthKey]);
+
+  const GroupedColumn = ({ title, color, count, items, renderItem, isScope = false }) => {
+    const grouped = items.reduce((acc, it) => {
+      const area = isScope ? (it.curriculum_areas?.name || it.area || 'General') : (getNormalizedItem(it).area || 'General');
+      if (!acc[area]) acc[area] = [];
+      acc[area].push(it);
+      return acc;
+    }, {});
+
+    return (
+      <div style={{
+        background: '#F8FAFC',
+        borderRadius: SQUARE_RADIUS,
+        border: `1px solid ${UI.border}`,
+        borderTop: `4px solid ${color}`,
+        overflow: 'hidden',
+        minWidth: 320,
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column'
+      }}>
+        <div style={{ padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${UI.border}`, background: '#FFFFFF' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: UI.primary, letterSpacing: 0.5 }}>{title}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#fff', background: color, padding: '2px 8px', borderRadius: SQUARE_RADIUS }}>{count}</div>
+        </div>
+
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 20, maxHeight: 620, overflowY: 'auto' }}>
+          {items.length === 0 && <div style={{ textAlign: 'center', color: UI.muted, fontSize: 13, padding: 20 }}>Empty</div>}
+
+          {Object.entries(grouped).map(([areaName, areaItems]) => (
+            <div key={areaName} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${UI.border}`, paddingBottom: 6 }}>
+                <div style={{ width: 10, height: 10, background: getSubjectStyle(areaName).accent, borderRadius: 2 }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{areaName}</span>
+              </div>
+              {areaItems.map(renderItem)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const handleScopeAction = async (session, status) => {
+    const linked = linkPlanItem(session);
+    if (linked?.id) {
+      // IMPORTANT: status update ONLY (do not touch raw/activity)
+      await onUpdatePlanItemStatus(linked.id, status);
+      return;
+    }
+    await onCreateFromScope(session, status, dateISO(activeDateObj));
+  };
+
+  const handlePlanStatus = async (planItem, status) => {
+    await onUpdatePlanItemStatus(planItem.id, status);
+  };
+
+  const handlePlanDate = async (planItem, nextISO) => {
+    await onUpdatePlanItemDate(planItem.id, nextISO);
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10, paddingTop: 6 }}>
+      <GroupedColumn
+        title="Suggestions (Scope & Sequence)"
+        color={UI.muted}
+        count={unplannedScopeSessions.length}
+        items={unplannedScopeSessions}
+        isScope
+        renderItem={(s) => (
+          <ScopeCard
+            key={s.id || `${s.plan_id}-${s.curriculum_activity_id}`}
+            session={s}
+            onCreateOrUpdate={(status) => handleScopeAction(s, status)}
+          />
+        )}
+      />
+      <GroupedColumn title="To Present" color={UI.primary} count={monthGroups.P.length} items={monthGroups.P}
+        renderItem={(it) => (
+          <PlanCard
+            key={it.id}
+            item={it}
+            onEdit={setEditingItem}
+            onStatus={(st) => handlePlanStatus(it, st)}
+            onDate={(d) => handlePlanDate(it, d)}
+            onRevert={() => onReturnToSuggestions(it)}
+          />
+        )}
+      />
+      <GroupedColumn title="Practicing" color={UI.accentYellow} count={monthGroups.W.length} items={monthGroups.W}
+        renderItem={(it) => (
+          <PlanCard
+            key={it.id}
+            item={it}
+            onEdit={setEditingItem}
+            onStatus={(st) => handlePlanStatus(it, st)}
+            onDate={(d) => handlePlanDate(it, d)}
+            onRevert={() => onReturnToSuggestions(it)}
+          />
+        )}
+      />
+      <GroupedColumn title="Mastered" color={UI.success} count={monthGroups.M.length} items={monthGroups.M}
+        renderItem={(it) => (
+          <PlanCard
+            key={it.id}
+            item={it}
+            onEdit={setEditingItem}
+            onStatus={(st) => handlePlanStatus(it, st)}
+            onDate={(d) => handlePlanDate(it, d)}
+            onRevert={() => onReturnToSuggestions(it)}
+          />
+        )}
+      />
+      <GroupedColumn title="Aim" color={THEME.status.A.dot} count={monthGroups.A.length} items={monthGroups.A}
+        renderItem={(it) => (
+          <PlanCard
+            key={it.id}
+            item={it}
+            onEdit={setEditingItem}
+            onStatus={(st) => handlePlanStatus(it, st)}
+            onDate={(d) => handlePlanDate(it, d)}
+            onRevert={() => onReturnToSuggestions(it)}
+          />
+        )}
+      />
+    </div>
+  );
+};
+
+/** ---------------------------
+ * WEEKLY CALENDAR
+ * - raw first title
+ * - status chips here too
+ * - Back works here too
+ * --------------------------- */
+const WeeklyCalendar = ({ studentPlans, activeDateObj, onMoveItemToDate, onUpdateItemStatus, setEditingItem, onReturnToSuggestions, boardFilterArea, deletedIdsSet }) => {
+  const weekStart = startOfWeekMonday(activeDateObj);
+  const weekDays = Array.from({ length: 5 }, (_, i) => ({
+    label: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][i],
+    date: dateISO(addDays(weekStart, i)),
+  }));
+
+  const filteredPlans = studentPlans
+    .filter((p) => !['Tasks', 'Observations'].includes(getNormalizedItem(p).area))
+    .filter((p) => !isArchived(p))
+    .filter((p) => !deletedIdsSet.has(String(p.id)))
+    .filter((p) => boardFilterArea === 'ALL' || getNormalizedItem(p).area === boardFilterArea);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, minHeight: 640 }}>
+      {weekDays.map((d) => {
+        const isToday = d.date === dateISO(new Date());
+        const dayItems = filteredPlans.filter((p) => String(p.planning_date || '').startsWith(d.date));
+
+        const groupedItems = dayItems.reduce((acc, item) => {
+          const area = getNormalizedItem(item).area || 'General';
+          if (!acc[area]) acc[area] = [];
+          acc[area].push(item);
+          return acc;
+        }, {});
+
+        return (
+          <div
+            key={d.date}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              try {
+                const payload = JSON.parse(e.dataTransfer.getData('item'));
+                if (payload.type === 'PLAN_ITEM') onMoveItemToDate(payload, d.date);
+              } catch (err) {}
+            }}
+            style={{
+              background: isToday ? rgba(UI.accentYellow, 0.05) : '#ffffff',
+              borderRadius: SQUARE_RADIUS,
+              border: `1px solid ${isToday ? UI.accentYellow : UI.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '14px 16px', borderBottom: `1px solid ${isToday ? rgba(UI.accentYellow, 0.3) : UI.border}`, background: isToday ? rgba(UI.accentYellow, 0.1) : '#fafafa' }}>
+              <div style={{ fontWeight: 600, fontSize: 12, color: isToday ? '#b45309' : UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{d.label}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: UI.muted, fontWeight: 500 }}>{safeDate(d.date)}</div>
+            </div>
+
+            <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: 20, overflowY: 'auto' }}>
+              {Object.entries(groupedItems).sort().map(([areaName, items]) => {
+                const subjStyle = getSubjectStyle(areaName);
+                return (
+                  <div key={areaName} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${UI.border}`, paddingBottom: 6 }}>
+                      <div style={{ width: 10, height: 10, background: subjStyle.accent, borderRadius: 2 }} />
+                      <span style={{ fontSize: 11, fontWeight: 600, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{areaName}</span>
+                    </div>
+
+                    {items.map((i) => {
+                      const title = getRawFirstTitle(i);
+
+                      return (
+                        <div
+                          key={i.id}
+                          draggable
+                          onDragStart={(e) => e.dataTransfer.setData('item', JSON.stringify({ type: 'PLAN_ITEM', id: i.id }))}
+                          onClick={() => setEditingItem(i)}
+                          style={{
+                            background: '#fff',
+                            padding: '14px 14px 12px',
+                            borderRadius: SQUARE_RADIUS,
+                            cursor: 'pointer',
+                            border: `1px solid ${UI.border}`,
+                            borderLeft: `4px solid ${subjStyle.accent || UI.primary}`,
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                          }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 500, color: UI.text, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                            {title}
+                          </div>
+
+                          <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                            <StatusChips
+                              value={i.status}
+                              compact={false}
+                              onSet={(st) => onUpdateItemStatus(i.id, st)}
+                              onRevert={() => onReturnToSuggestions(i)}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+/** ---------------------------
+ * ADD & EDIT MODALS
+ * (kept from your version; only minor safety to use planning_date)
+ * --------------------------- */
+const AddActivityModal = ({ open, onClose, onSubmit, classrooms = [], students = [], curriculum = [], curriculumAreas = [], curriculumCategories = [], defaults = {}, showToast }) => {
   const [classroomId, setClassroomId] = useState(defaults.classroom_id ?? classrooms?.[0]?.id ?? '');
   const [status, setStatus] = useState(defaults.status ?? 'P');
-  const [date, setDate] = useState(defaults.date ?? '');
+  const [planningDate, setPlanningDate] = useState(defaults.planning_date ?? '');
   const [areaId, setAreaId] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [activityId, setActivityId] = useState('');
@@ -552,7 +866,7 @@ function AddActivityModal({ open, onClose, onSubmit, classrooms = [], students =
     if (!open) return;
     setClassroomId(defaults.classroom_id ?? classrooms?.[0]?.id ?? '');
     setStatus(defaults.status ?? 'P');
-    setDate(defaults.date ?? '');
+    setPlanningDate(defaults.planning_date ?? '');
     setAreaId('');
     setCategoryId('');
     setActivityId('');
@@ -606,11 +920,13 @@ function AddActivityModal({ open, onClose, onSubmit, classrooms = [], students =
       const finalName = actObj ? actObj.name : customActivityName;
       const entryType = actObj ? 'curriculum' : 'mixed';
 
+      const pd = iso10(planningDate || defaults.activeDateISO || getBusinessDayISO()) || getBusinessDayISO();
+
       await Promise.all(
         Array.from(selected).map((student_id) => onSubmit?.({
           student_id,
           status,
-          date: date || defaults.activeDateISO || dateISO(new Date()),
+          planning_date: pd,
           activity: finalName,
           notes: clean(teacherNote),
           raw_activity: clean(subActivity),
@@ -638,7 +954,7 @@ function AddActivityModal({ open, onClose, onSubmit, classrooms = [], students =
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
           <div><Label>Classroom</Label><Field as="select" value={classroomId} onChange={(e) => setClassroomId(e.target.value)}>{classrooms.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}</Field></div>
           <div><Label>Status</Label><Field as="select" value={status} onChange={(e) => setStatus(e.target.value)}>{Object.keys(statusConfig).map((k) => (<option key={k} value={k}>{statusConfig[k].label}</option>))}</Field></div>
-          <div><Label>Date (optional)</Label><Field type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+          <div><Label>Date (optional)</Label><Field type="date" value={planningDate} onChange={(e) => setPlanningDate(e.target.value)} /></div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.5fr', gap: 14 }}>
@@ -700,9 +1016,9 @@ function AddActivityModal({ open, onClose, onSubmit, classrooms = [], students =
       </div>
     </Modal>
   );
-}
+};
 
-function EditActivityModal({ item, curriculum = [], curriculumAreas = [], curriculumCategories = [], onSave, onDelete, onClose }) {
+const EditActivityModal = ({ item, curriculum = [], curriculumAreas = [], curriculumCategories = [], onSave, onDelete, onReturnToSuggestions, onClose }) => {
   const [status, setStatus] = useState('P');
   const [planningDate, setPlanningDate] = useState('');
   const [areaId, setAreaId] = useState('');
@@ -759,6 +1075,7 @@ function EditActivityModal({ item, curriculum = [], curriculumAreas = [], curric
       curriculum_area_id: parseId(areaObj?.id),
       curriculum_category_id: parseId(catObj?.id),
       entry_type: entryType,
+      area: areaObj?.name || item.area || null,
     };
 
     if (pd) {
@@ -803,8 +1120,18 @@ function EditActivityModal({ item, curriculum = [], curriculumAreas = [], curric
           </div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-          <Button variant="danger" onClick={() => onDelete?.(item.id)} title="Delete"><Trash2 size={14} /> Delete</Button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <Button
+              variant="primary"
+              onClick={() => onReturnToSuggestions?.(item)}
+              title="Return to Suggestions"
+              style={{ borderColor: rgba(UI.danger, 0.25), color: UI.danger }}
+            >
+              <Undo2 size={14} /> Return to Suggestions
+            </Button>
+            <Button variant="danger" onClick={() => onDelete?.(item.id)} title="Delete"><Trash2 size={14} /> Delete</Button>
+          </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button variant="solid" onClick={handleSave}><CheckCircle size={14} /> Save Changes</Button>
@@ -813,10 +1140,11 @@ function EditActivityModal({ item, curriculum = [], curriculumAreas = [], curric
       </div>
     </Modal>
   );
-}
+};
 
 /** ---------------------------
  * FULL ASSESSMENT PANEL
+ * (UNCHANGED from your script)
  * --------------------------- */
 const isSpecialToken = (v) => {
   const s = String(v ?? '').trim().toLowerCase();
@@ -917,7 +1245,7 @@ const InsightsPanel = ({ areas }) => {
   );
 };
 
-function AssessmentPanel({ profile, student, classroomId, showToast }) {
+const AssessmentPanel = ({ profile, student, classroomId, showToast }) => {
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [assessmentMap, setAssessmentMap] = useState({});
@@ -1231,7 +1559,123 @@ function AssessmentPanel({ profile, student, classroomId, showToast }) {
       </ThemedCard>
     </div>
   );
-}
+};
+
+/** ---------------------------
+ * COORDINATION PANEL
+ * (UNCHANGED)
+ * --------------------------- */
+const CoordinationPanel = ({ student, showToast }) => {
+  const [observations, setObservations] = useState([]);
+  const [actions, setActions] = useState([]);
+  const [meetings, setMeetings] = useState({});
+  const [teachers, setTeachers] = useState({});
+
+  const loadCoordinationData = async () => {
+    if (!student?.id) return;
+    try {
+      const [obsRes, actRes, profilesRes] = await Promise.all([
+        supabase.from('coordination_observations').select('*').eq('student_id', student.id).order('created_at', { ascending: false }),
+        supabase.from('coordination_action_plans').select('*').eq('target_student_id', student.id).order('id', { ascending: false }),
+        supabase.from('profiles').select('id, full_name, first_name, last_name')
+      ]);
+
+      setObservations(obsRes.data || []);
+      setActions(actRes.data || []);
+
+      const tMap = {};
+      (profilesRes.data || []).forEach(p => {
+        tMap[p.id] = p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim();
+      });
+      setTeachers(tMap);
+
+      const mIds = new Set();
+      (obsRes.data || []).forEach(o => o.meeting_id && mIds.add(o.meeting_id));
+      (actRes.data || []).forEach(a => a.meeting_id && mIds.add(a.meeting_id));
+
+      if (mIds.size > 0) {
+        const { data: mtgs } = await supabase.from('weekly_coordination_meetings').select('*').in('id', Array.from(mIds));
+        const mMap = {};
+        (mtgs || []).forEach(m => mMap[m.id] = m);
+        setMeetings(mMap);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => { loadCoordinationData(); }, [student?.id]);
+
+  const toggleActionStatus = async (actionId, currentStatus) => {
+    const nextStatus = cycleActionStatus(currentStatus);
+    try {
+      await supabase.from('coordination_action_plans').update({ status: nextStatus }).eq('id', actionId);
+      setActions(prev => prev.map(a => a.id === actionId ? { ...a, status: nextStatus } : a));
+    } catch (e) {
+      showToast?.({ type: 'error', message: 'Failed to update status.' });
+    }
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 24 }}>
+      <ThemedCard style={{ padding: 24 }} accentColor={UI.accentTeal}>
+        <SectionHeader icon={Target} title="Pending Action Items" />
+
+        {actions.length === 0 ? (
+          <div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No action items logged for this student.</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {actions.map((a) => {
+              const mtg = meetings[a.meeting_id];
+              return (
+                <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 105px', gap: 16, alignItems: 'center', background: '#fff', padding: '14px 16px', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
+                  <div style={{ wordBreak: 'break-word' }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: UI.primary, marginBottom: 4, lineHeight: '1.4' }}>{a.description || 'Untitled Action'}</div>
+                    <div style={{ fontSize: 12, color: UI.muted, display: 'flex', gap: 12, fontWeight: 400 }}>
+                      <span>{a.subject || 'General'}</span>
+                      {mtg && <span>• Assigned Week {mtg.week_number}</span>}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 13, fontWeight: 500, color: UI.text }}>
+                    {a.custom_assignee || teachers[a.assigned_to] || 'Unassigned'}
+                  </div>
+
+                  <ActionStatusPill status={a.status} onClick={() => toggleActionStatus(a.id, a.status)} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ThemedCard>
+
+      <ThemedCard style={{ padding: 24 }} accentColor={UI.accentPeach}>
+        <SectionHeader icon={MessageSquare} title="Meeting Observations" />
+
+        {observations.length === 0 ? (
+          <div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No observations logged for this student.</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {observations.map((o) => {
+              const mtg = meetings[o.meeting_id];
+              return (
+                <div key={o.id} style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 16, alignItems: 'center', background: '#f9fafb', padding: '14px 16px', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: UI.primary }}>{o.type || 'Behavioral'}</div>
+                    {mtg && <div style={{ fontSize: 11, color: UI.muted, marginTop: 4 }}>Week {mtg.week_number}</div>}
+                  </div>
+                  <div style={{ fontSize: 13, color: UI.text, lineHeight: '1.5' }}>
+                    {o.observation || 'No details provided.'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ThemedCard>
+    </div>
+  );
+};
 
 /** ---------------------------
  * STUDENT SELECT GRID
@@ -1304,9 +1748,17 @@ const IndividualPlanner = ({
   const [searchStudent, setSearchStudent] = useState('');
   const [localStudentPlans, setLocalStudentPlans] = useState([]);
 
-  const todayISO = dateISO(new Date());
+  // Track deleted IDs so they never "reappear" from stale parent props
+  const [deletedIds, setDeletedIds] = useState(() => new Set());
+  const deletedIdsSet = deletedIds;
 
-  useEffect(() => { if (!activeDate) setActiveDate(todayISO); }, [activeDate, setActiveDate, todayISO]);
+  const businessISO = getBusinessDayISO();
+
+  // Always lock activeDate to current business day (current week/month)
+  useEffect(() => {
+    if (!activeDate || iso10(activeDate) !== businessISO) setActiveDate(businessISO);
+  }, [activeDate, businessISO, setActiveDate]);
+
   useEffect(() => { if (forcedStudentId) setSelectedId(forcedStudentId); }, [forcedStudentId]);
 
   const isParentLocked = !!forcedStudentId;
@@ -1315,50 +1767,66 @@ const IndividualPlanner = ({
 
   useEffect(() => {
     if (!selectedId) return;
-    const fromProps = (planItems || []).filter((p) => String(p.student_id) === String(selectedId));
+    const fromProps = (planItems || [])
+      .filter((p) => String(p.student_id) === String(selectedId))
+      .filter((p) => !deletedIdsSet.has(String(p.id)));
     setLocalStudentPlans(fromProps);
-  }, [planItems, selectedId]);
+  }, [planItems, selectedId, deletedIdsSet]);
 
-  const activeDateObj = toDateObj(activeDate || todayISO);
+  const activeDateObj = toDateObj(activeDate || businessISO);
 
-  const optimisticUpdateItem = async (patch) => {
+  const buildDateParts = (pd) => {
+    const v = iso10(pd);
+    if (!v) return { planning_date: null, year: null, month: null, day: null };
+    return {
+      planning_date: v,
+      year: Number(v.slice(0, 4)),
+      month: Number(v.slice(5, 7)),
+      day: Number(v.slice(8, 10)),
+    };
+  };
+
+  // Low-level: update ONLY specified fields (prevents raw_activity overwrite on status change)
+  const updatePlanItemFields = async (id, fields, { toastOnError = true, callParent = false } = {}) => {
     const prev = localStudentPlans;
-    setLocalStudentPlans((cur) => cur.map((x) => (String(x.id) === String(patch.id) ? { ...x, ...patch } : x)));
-    try { 
-      const { error } = await supabase.from('student_plan_items').update({
-        status: patch.status,
-        planning_date: patch.planning_date,
-        year: patch.year, month: patch.month, day: patch.day,
-        activity: patch.activity,
-        raw_activity: patch.raw_activity,
-        notes: patch.notes,
-        entry_type: patch.entry_type
-      }).eq('id', patch.id);
+
+    setLocalStudentPlans((cur) =>
+      cur.map((x) => (String(x.id) === String(id) ? { ...x, ...fields } : x))
+    );
+
+    try {
+      if (String(id).startsWith('temp-')) {
+        // temp item: local only
+        if (callParent) await onUpdateItem?.({ id, ...fields });
+        return;
+      }
+
+      const { error } = await supabase.from('plan_items').update(fields).eq('id', id);
       if (error) throw error;
-      
-      await onUpdateItem?.(patch); 
+
+      // IMPORTANT: don't call parent unless explicitly asked
+      if (callParent) await onUpdateItem?.({ id, ...fields });
+    } catch (e) {
+      console.error(e);
+      setLocalStudentPlans(prev);
+      if (toastOnError) showToast?.({ type: 'error', message: e?.message || 'Update failed.' });
     }
-    catch (e) { setLocalStudentPlans(prev); showToast?.({ type: 'error', message: 'Update failed.' }); throw e; }
   };
 
   const optimisticMoveItemToDate = async (payload, isoDate) => {
-    const it = localStudentPlans.find((p) => String(p.id) === String(payload?.id)); if (!it) return;
-    const prev = localStudentPlans;
-    const pd = iso10(isoDate);
-    const patch = { ...it, planning_date: pd, year: pd ? Number(pd.slice(0, 4)) : it.year, month: pd ? Number(pd.slice(5, 7)) : it.month, day: pd ? Number(pd.slice(8, 10)) : it.day };
-    setLocalStudentPlans((cur) => cur.map((x) => (String(x.id) === String(it.id) ? patch : x)));
-    try { 
-      await supabase.from('student_plan_items').update({
-        planning_date: patch.planning_date, year: patch.year, month: patch.month, day: patch.day
-      }).eq('id', patch.id);
-      await onMoveItemToDate?.(payload, isoDate); 
-    }
-    catch (e) { setLocalStudentPlans(prev); showToast?.({ type: 'error', message: 'Move failed.' }); throw e; }
+    const it = localStudentPlans.find((p) => String(p.id) === String(payload?.id));
+    if (!it) return;
+
+    const next = buildDateParts(isoDate);
+    await updatePlanItemFields(it.id, next);
+    await onMoveItemToDate?.(payload, isoDate);
   };
 
   const optimisticCreateItem = async (payload) => {
     const tempId = `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const pd = iso10(payload.date || payload.planning_date || todayISO) || todayISO;
+    const pd = iso10(payload.planning_date || payload.date || businessISO) || businessISO;
+    const dp = buildDateParts(pd);
+
     const temp = {
       id: tempId,
       student_id: Number(payload.student_id),
@@ -1369,56 +1837,50 @@ const IndividualPlanner = ({
       raw_activity: payload.raw_activity || null,
       notes: payload.notes || null,
       status: payload.status || 'P',
-      planning_date: pd,
-      year: Number(pd.slice(0, 4)),
-      month: Number(pd.slice(5, 7)),
-      day: Number(pd.slice(8, 10)),
+      ...dp,
       created_at: new Date().toISOString(),
       entry_type: payload.entry_type || 'mixed',
       curriculum_area_id: payload.curriculum_area_id ?? null,
       curriculum_category_id: payload.curriculum_category_id ?? null,
       curriculum_activity_id: payload.curriculum_activity_id ?? null,
     };
+
     const prev = localStudentPlans;
     if (String(payload.student_id) === String(student?.id)) setLocalStudentPlans((cur) => [temp, ...cur]);
-    try { await onQuickAdd?.(payload); }
-    catch (e) { setLocalStudentPlans(prev); showToast?.({ type: 'error', message: 'Add failed.' }); throw e; }
+
+    try {
+      // Ensure DB-safe payload uses planning_date
+      const dbPayload = { ...payload, planning_date: pd };
+      await onQuickAdd?.(dbPayload);
+    } catch (e) {
+      setLocalStudentPlans(prev);
+      showToast?.({ type: 'error', message: 'Add failed.' });
+      throw e;
+    }
   };
 
-  const updateStatusWithDateRule = async (id, status, targetDateISO, extraPatch = {}) => {
-    const it = localStudentPlans.find((p) => String(p.id) === String(id)); if (!it) return;
-    const pd = iso10(targetDateISO) || iso10(it.planning_date) || todayISO;
-    
-    const norm = getNormalizedItem(it);
-    const specificName = clean(it.raw_activity) || clean(norm.rawActivity);
-    const categoryName = clean(it.activity) || clean(norm.title);
-    const bestTitle = specificName || categoryName || 'Untitled Activity';
+  // STATUS UPDATE: update ONLY status (never touch raw_activity/activity)
+  const updateStatusOnly = async (id, status) => {
+    await updatePlanItemFields(id, { status }, { callParent: false });
+  };
 
-    await optimisticUpdateItem({ 
-      ...it, 
-      status, 
-      planning_date: pd, 
-      year: Number(pd.slice(0, 4)), 
-      month: Number(pd.slice(5, 7)), 
-      day: Number(pd.slice(8, 10)),
-      activity: bestTitle,
-      raw_activity: specificName, 
-      ...extraPatch
-    });
+  // DATE UPDATE: update only date parts
+  const updateDateOnly = async (id, nextISO) => {
+    await updatePlanItemFields(id, buildDateParts(nextISO), { callParent: false });
   };
 
   const createFromScopeSession = async (session, status, targetDateISO) => {
     const areaName = session?.curriculum_areas?.name || session.area || 'General';
-    
+
     const raw = clean(session?.raw_activity) || clean(session?.session_label) || clean(session?.teacher_notes);
     const official = clean(session?.curriculum_activities?.name) || clean(session?.activity) || 'Activity';
 
     await optimisticCreateItem({
       student_id: student.id,
       status,
-      date: targetDateISO,
-      activity: official, 
-      raw_activity: raw, 
+      planning_date: iso10(targetDateISO) || businessISO,
+      activity: official,
+      raw_activity: raw,
       notes: session.teacher_notes || null,
       area: areaName,
       curriculum_activity_id: parseId(session.curriculum_activity_id),
@@ -1428,29 +1890,45 @@ const IndividualPlanner = ({
     });
   };
 
-  const archiveToUnplanned = async (planItem) => {
+  // RETURN TO SUGGESTIONS:
+  // - for scope-linked items: delete plan_item row
+  // - do NOT set entry_type to "archived" (invalid enum)
+  // - do NOT call parent onDeleteItem (might show its own confirm)
+  // - prevent reappearance from stale props using deletedIds set
+  const returnToSuggestions = async (planItem) => {
     if (!planItem?.id) return;
-    if (!window.confirm('Return this activity to Suggestions?')) return;
+
+    const isScopeLinked = !!planItem.curriculum_activity_id;
+
+    // One-click for scope-backed items (no scary delete prompt)
+    // For custom items, keep ONE clear confirm because it’s truly gone.
+    if (!isScopeLinked) {
+      if (!window.confirm('This is a custom activity (not in Scope & Sequence). Remove it from the plan permanently?')) return;
+    }
 
     try {
       if (String(planItem.id).startsWith('temp-')) {
-        setLocalStudentPlans(cur => cur.filter(x => x.id !== planItem.id));
+        setLocalStudentPlans((cur) => cur.filter((x) => x.id !== planItem.id));
         return;
       }
 
-      // Soft archive avoids all Database Date constraint errors
-      const patch = { entry_type: 'archived' };
-      const { error } = await supabase.from('student_plan_items').update(patch).eq('id', planItem.id);
+      const { error } = await supabase.from('plan_items').delete().eq('id', planItem.id);
       if (error) throw error;
-      
-      const updatedItem = { ...planItem, entry_type: 'archived' };
-      setLocalStudentPlans(cur => cur.map(x => String(x.id) === String(planItem.id) ? updatedItem : x));
-      await onUpdateItem?.(updatedItem);
-      
+
+      // prevent "reappearing" from stale parent props
+      setDeletedIds((prev) => {
+        const n = new Set(prev);
+        n.add(String(planItem.id));
+        return n;
+      });
+
+      setLocalStudentPlans((cur) => cur.filter((x) => String(x.id) !== String(planItem.id)));
+
+      // IMPORTANT: do NOT call onDeleteItem here (it triggers the confirm you're seeing)
       showToast?.({ type: 'success', message: 'Returned to Suggestions.' });
     } catch (e) {
       console.error(e);
-      showToast?.({ type: 'error', message: e.message || 'Failed to move back to unplanned.' });
+      showToast?.({ type: 'error', message: e.message || 'Failed to return to suggestions.' });
     }
   };
 
@@ -1482,11 +1960,11 @@ const IndividualPlanner = ({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap', gap: 20 }}>
               <div style={{ position: 'relative', width: '100%', maxWidth: 500 }}>
                 <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: UI.muted }} />
-                <Field 
-                  value={searchStudent} 
-                  onChange={(e) => setSearchStudent(e.target.value)} 
-                  placeholder="Search for a student..." 
-                  style={{ paddingLeft: 46, fontSize: 15, padding: '14px 16px 14px 46px', height: '48px' }} 
+                <Field
+                  value={searchStudent}
+                  onChange={(e) => setSearchStudent(e.target.value)}
+                  placeholder="Search for a student..."
+                  style={{ paddingLeft: 46, fontSize: 15, padding: '14px 16px 14px 46px', height: '48px' }}
                 />
               </div>
             </div>
@@ -1507,6 +1985,9 @@ const IndividualPlanner = ({
   // --------------------------
   // SELECTED STUDENT VIEW
   // --------------------------
+  const headerWeek = getWeekFromDate(businessISO);
+  const headerMonthObj = toDateObj(businessISO);
+
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', height: 'calc(100vh - clamp(32px, 6vw, 100px))', fontFamily: THEME.sansFont, background: UI.bg, overflow: 'hidden' }}>
       <style>{`
@@ -1524,13 +2005,12 @@ const IndividualPlanner = ({
         curriculum={curriculum}
         curriculumAreas={curriculumAreas}
         curriculumCategories={curriculumCategories}
-        defaults={{ preSelectedStudentId: student?.id, activeDateISO: dateISO(activeDateObj) }}
+        defaults={{ preSelectedStudentId: student?.id, activeDateISO: businessISO }}
         showToast={showToast}
       />
 
-      {/* LEFT-ALIGNED STUDENT PROFILE HEADER */}
+      {/* HEADER */}
       <div style={{ flexShrink: 0, padding: '16px 28px', background: '#fff', borderBottom: `1px solid ${UI.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        
         <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
           {!isParentLocked && (
             <button
@@ -1556,7 +2036,7 @@ const IndividualPlanner = ({
         </div>
       </div>
 
-      {/* NAVIGATION TABS & GLOBAL BOARD FILTER */}
+      {/* TABS */}
       <div style={{ flexShrink: 0, padding: '16px 28px', background: UI.bg, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: '#fff', padding: 6, borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
           <ViewToggle active={tab === 'MONTH'} icon={CalendarDays} label="Monthly Board" onClick={() => setTab('MONTH')} />
@@ -1567,23 +2047,19 @@ const IndividualPlanner = ({
 
         {(tab === 'WEEK' || tab === 'MONTH') && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#fff', padding: '6px 10px', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
-              <button onClick={() => setActiveDate(tab === 'WEEK' ? dateISO(addDays(activeDateObj, -7)) : firstOfMonthISO(addMonths(activeDateObj, -1)))} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 6, color: UI.primary, display: 'flex' }}><ChevronLeft size={16} /></button>
-              <span style={{ fontSize: 13, fontWeight: 600, color: UI.primary, minWidth: 80, textAlign: 'center', userSelect: 'none' }}>
-                {tab === 'WEEK' ? `Week ${getWeekFromDate(activeDateObj)}` : activeDateObj.toLocaleString('default', { month: 'long' })}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '6px 10px', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none' }}>
+                {tab === 'WEEK' ? `Week ${headerWeek}` : headerMonthObj.toLocaleString('default', { month: 'long' })}
               </span>
-              <button onClick={() => setActiveDate(tab === 'WEEK' ? dateISO(addDays(activeDateObj, 7)) : firstOfMonthISO(addMonths(activeDateObj, 1)))} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 6, color: UI.primary, display: 'flex' }}><ChevronRight size={16} /></button>
               <div style={{ width: 1, height: 20, background: UI.border, margin: '0 8px' }} />
-              <Button variant="ghost" onClick={() => setActiveDate(getBusinessDayISO())} style={{ padding: '6px 12px', fontSize: 12 }}>
-                Jump to Current
-              </Button>
+              <div style={{ fontSize: 12, color: UI.muted, fontWeight: 600 }}>Current</div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
-              <Field 
-                as="select" 
-                value={boardFilterArea} 
-                onChange={(e) => setBoardFilterArea(e.target.value)} 
+              <Field
+                as="select"
+                value={boardFilterArea}
+                onChange={(e) => setBoardFilterArea(e.target.value)}
                 style={{ width: 180, border: 'none', background: 'transparent', fontWeight: 500, padding: '8px 12px', color: UI.primary, height: '38px' }}
               >
                 <option value="ALL">All Areas</option>
@@ -1594,7 +2070,7 @@ const IndividualPlanner = ({
         )}
       </div>
 
-      {/* SCROLLABLE CONTENT */}
+      {/* CONTENT */}
       <div style={{ flex: 1, minHeight: 0, padding: '0 28px 40px', overflowY: 'auto', overflowX: 'hidden' }}>
         <div style={{ maxWidth: 1600, margin: '0 auto' }}>
           {tab === 'MONTH' && (
@@ -1605,10 +2081,12 @@ const IndividualPlanner = ({
               planSessions={planSessions}
               activeDateObj={activeDateObj}
               onCreateFromScope={createFromScopeSession}
-              onUpdatePlanItemStatus={updateStatusWithDateRule}
+              onUpdatePlanItemStatus={updateStatusOnly}
+              onUpdatePlanItemDate={updateDateOnly}
               setEditingItem={setEditingItem}
-              onArchivePlanItem={archiveToUnplanned}
+              onReturnToSuggestions={returnToSuggestions}
               boardFilterArea={boardFilterArea}
+              deletedIdsSet={deletedIdsSet}
             />
           )}
 
@@ -1617,9 +2095,11 @@ const IndividualPlanner = ({
               studentPlans={localStudentPlans}
               activeDateObj={activeDateObj}
               onMoveItemToDate={optimisticMoveItemToDate}
+              onUpdateItemStatus={updateStatusOnly}
               setEditingItem={setEditingItem}
-              onArchiveItem={archiveToUnplanned}
+              onReturnToSuggestions={returnToSuggestions}
               boardFilterArea={boardFilterArea}
+              deletedIdsSet={deletedIdsSet}
             />
           )}
 
@@ -1634,8 +2114,30 @@ const IndividualPlanner = ({
           curriculum={curriculum}
           curriculumAreas={curriculumAreas}
           curriculumCategories={curriculumCategories}
-          onSave={optimisticUpdateItem}
+          onSave={async (payload) => {
+            // Full save from modal: OK to update these fields
+            const id = payload.id;
+            const fields = {
+              status: payload.status,
+              planning_date: payload.planning_date ?? null,
+              year: payload.year ?? null,
+              month: payload.month ?? null,
+              day: payload.day ?? null,
+              activity: payload.activity ?? null,
+              raw_activity: payload.raw_activity ?? null,
+              notes: payload.notes ?? null,
+              area: payload.area ?? null,
+              curriculum_area_id: payload.curriculum_area_id ?? null,
+              curriculum_category_id: payload.curriculum_category_id ?? null,
+              curriculum_activity_id: payload.curriculum_activity_id ?? null,
+              entry_type: payload.entry_type ?? undefined, // keep if valid enum
+            };
+            // Remove undefined keys so we don't accidentally write them
+            Object.keys(fields).forEach((k) => fields[k] === undefined && delete fields[k]);
+            await updatePlanItemFields(id, fields, { callParent: true });
+          }}
           onDelete={onDeleteItem}
+          onReturnToSuggestions={returnToSuggestions}
           onClose={() => setEditingItem(null)}
         />
       )}
