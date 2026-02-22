@@ -137,12 +137,16 @@ export const isDateInWeek = (iso, weekStartISO) => {
 export const getWeekFromDate = (dateValue) => {
   if (!dateValue) return 1;
   
-  const start = new Date(`${ACADEMIC_START}T00:00:00Z`);
-  const t = new Date(dateValue);
-  const target = new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+  // Extract strictly year/month/day to prevent local timezone shifts from losing a day
+  const isoStr = typeof dateValue === 'string' ? dateValue.slice(0, 10) : dateISO(dateValue);
+  if (!isoStr) return 1;
   
-  const diffTime = target - start;
-  const diffDays = diffTime / (1000 * 60 * 60 * 24);
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d));
+  const start = new Date(`${ACADEMIC_START}T00:00:00Z`);
+  
+  const diffTime = target.getTime() - start.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
   
   let diffWeeks = Math.floor(diffDays / 7) + 1;
   
@@ -233,7 +237,9 @@ export const getNormalizedItem = (item) => {
   const manualActivity = item.activity || 'Untitled';
   const normTitle = linkedName || manualActivity;
   const normArea = item.curriculum_areas?.name || item.area || item.subject || 'General';
-  const rawActivity = item.activity || '';
+  
+  // FIX: Read directly from raw_activity first!
+  const rawActivity = item.raw_activity || item.activity || '';
   
   return {
     id: item.id,

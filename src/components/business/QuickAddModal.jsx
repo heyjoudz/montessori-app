@@ -163,7 +163,6 @@ const StyledButton = ({ variant = 'primary', children, style, ...props }) => {
   );
 };
 
-
 const STATUS_OPTIONS = [
   { value: 'P', label: 'To Present' },
   { value: 'W', label: 'Practicing' },
@@ -311,6 +310,7 @@ export default function QuickAddModal({
       category: category || null,
       activity: clean(activity),
       teacher_note: clean(teacherNote) || null,
+      raw_activity: clean(teacherNote) || null, // MUST provide raw_activity here!
       student_ids: Array.from(selected)
     });
   };
