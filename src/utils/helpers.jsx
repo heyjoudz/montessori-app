@@ -1,19 +1,19 @@
-import React from 'react'; // FIXED: Required for JSX in renderS1S2Italic
-import { SESSION_TYPE_STYLE, THEME } from '../ui/theme'; // Adjust path if your theme is elsewhere
+import React from 'react';
+import { SESSION_TYPE_STYLE, THEME } from '../ui/theme'; 
 
 // --- CONSTANTS ---
 export const SUBJECT_KEYS = ['Math', 'English', 'Sensorial', 'Culture', 'Practical Life'];
 export const ACADEMIC_START = '2025-09-08';
+export const WINTER_BREAK_START = '2025-12-20'; // Adjust if your break started on a different day
+export const WINTER_BREAK_OFFSET_WEEKS = 2;
 export const PAGE_SIZE = 1000;
 
 // --- STATUS & TYPES ---
-
 export const normalizeStatusCode = (raw) => {
   const s = (raw ?? '').toString().trim();
   if (!s) return 'P';
   
   const u = s.toUpperCase();
-  // FIXED: Explicitly allow 'A' here so it doesn't fall through to default 'P'
   if (u === 'P' || u === 'W' || u === 'M' || u === 'A') return u;
 
   const n = s.toLowerCase().replace(/[_-]/g, ' ').trim();
@@ -24,11 +24,11 @@ export const normalizeStatusCode = (raw) => {
   if (n === 'aim' || n === 'next month aim' || n === 'goal') return 'A';
   if (u === 'ARCHIVED' || n === 'archived') return 'Archived';
   
-  return 'P'; // Default
+  return 'P'; 
 };
 
 export const inferDashboardType = (row) => {
-  if (!row) return 'other'; // FIXED: Crash prevention
+  if (!row) return 'other';
   const explicit = row.entry_type || row.plan_entry_type || row.type || row.item_type || row.kind;
   if (explicit) return String(explicit).toLowerCase();
   if (row.curriculum_activity_id) return 'curriculum';
@@ -75,12 +75,10 @@ export const getSessionType = (s) => {
   return 'CURR';
 };
 
-// --- DATES (FIXED FOR UTC TO PREVENT OFF-BY-ONE ERRORS) ---
-
+// --- DATES ---
 export const dateISO = (d) => {
   if (!d) return null;
   
-  // If strict YYYY-MM-DD string, return as is
   if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) {
     return d.substring(0, 10);
   }
@@ -88,7 +86,6 @@ export const dateISO = (d) => {
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return null;
 
-  // FIXED: Use UTC to prevent timezone shifts (e.g. 2025-09-08 -> 2025-09-07)
   const yyyy = dt.getUTCFullYear();
   const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(dt.getUTCDate()).padStart(2, '0');
@@ -102,7 +99,6 @@ export const safeDate = (dateStr) => {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return 'No Date';
   
-  // FIXED: If YYYY-MM-DD format, force UTC display so "Sep 8" is truly "Sep 8"
   if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
@@ -112,19 +108,20 @@ export const safeDate = (dateStr) => {
 
 export const addDays = (d, n) => {
   const dt = new Date(d);
-  // FIXED: Add using UTC Date to avoid DST shifts
   dt.setUTCDate(dt.getUTCDate() + n);
   return dt;
 };
 
 export const startOfWeekMonday = (d) => {
-  const dt = new Date(d);
-  const day = dt.getDay(); // 0=Sun, 1=Mon...
+  const dt = typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) 
+    ? new Date(`${d}T00:00:00Z`) 
+    : new Date(d);
+
+  const day = dt.getUTCDay(); 
   const diffToMon = (day === 0 ? -6 : 1) - day;
   
-  // Adjust date
-  dt.setDate(dt.getDate() + diffToMon);
-  dt.setHours(0, 0, 0, 0);
+  dt.setUTCDate(dt.getUTCDate() + diffToMon);
+  dt.setUTCHours(0, 0, 0, 0);
   return dt;
 };
 
@@ -139,10 +136,22 @@ export const isDateInWeek = (iso, weekStartISO) => {
 
 export const getWeekFromDate = (dateValue) => {
   if (!dateValue) return 1;
-  const start = new Date(ACADEMIC_START);
-  const target = new Date(dateValue);
+  
+  const start = new Date(`${ACADEMIC_START}T00:00:00Z`);
+  const t = new Date(dateValue);
+  const target = new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+  
   const diffTime = target - start;
-  const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7));
+  const diffDays = diffTime / (1000 * 60 * 60 * 24);
+  
+  let diffWeeks = Math.floor(diffDays / 7) + 1;
+  
+  // ADJUSTMENT: Subtract holiday weeks if we are past the winter break
+  const breakStart = new Date(`${WINTER_BREAK_START}T00:00:00Z`);
+  if (target >= breakStart) {
+    diffWeeks -= WINTER_BREAK_OFFSET_WEEKS;
+  }
+  
   if (diffWeeks < 1) return 1;
   return Math.max(1, Math.min(diffWeeks, 40));
 };
@@ -150,25 +159,36 @@ export const getWeekFromDate = (dateValue) => {
 export const getWeekStartFromAcademic = (weekNum) => {
   const base = startOfWeekMonday(ACADEMIC_START);
   const w = Math.max(1, Number(weekNum || 1));
-  return addDays(base, (w - 1) * 7);
+  
+  let targetDate = addDays(base, (w - 1) * 7);
+
+  // ADJUSTMENT: Push the date forward if the target week happens after the holiday
+  const breakStart = new Date(`${WINTER_BREAK_START}T00:00:00Z`);
+  const weeksBeforeBreak = Math.floor((breakStart - base) / (1000 * 60 * 60 * 24) / 7) + 1;
+
+  if (w >= weeksBeforeBreak) {
+    targetDate = addDays(targetDate, WINTER_BREAK_OFFSET_WEEKS * 7);
+  }
+
+  return targetDate;
 };
 
 export const getWeekRangeLabel = (weekNum) => {
   const ws = getWeekStartFromAcademic(weekNum);
   const we = addDays(ws, 4); 
+  
   const start = safeDate(dateISO(ws));
   const end = safeDate(dateISO(we));
   return `${start} – ${end}`;
 };
 
 export const getMonthName = (monthNum) => {
-  const startMonthIndex = 8; // Sep (0-indexed 8 = Sep)
+  const startMonthIndex = 8; 
   const d = new Date(new Date().getFullYear(), startMonthIndex + (monthNum - 1), 1);
   return d.toLocaleString('default', { month: 'long' });
 };
 
 // --- STRINGS & FORMATTING ---
-
 export const getFirstName = (displayName) => (displayName ? displayName.split(' ')[0] : 'Teacher');
 
 export const getDisplayName = (profile, user) => {
@@ -206,9 +226,8 @@ export const renderS1S2Italic = (text) => {
 };
 
 // --- DATA NORMALIZATION ---
-
 export const getNormalizedItem = (item) => {
-  if (!item) return {}; // FIXED: Crash prevention
+  if (!item) return {};
 
   const linkedName = item.curriculum_activities?.name;
   const manualActivity = item.activity || 'Untitled';
@@ -292,7 +311,6 @@ export const groupWeekSessions = (sessions = []) => {
 };
 
 // --- COLORS ---
-
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
 
 export const mixHex = (hexA, hexB = '#FFFFFF', t = 0.2) => {
@@ -313,7 +331,6 @@ export const mixHex = (hexA, hexB = '#FFFFFF', t = 0.2) => {
 };
 
 // --- CACHE & DATA UTILS ---
-
 export const CURR_CACHE = {
   activitiesById: new Map(),
   areasById: new Map(),

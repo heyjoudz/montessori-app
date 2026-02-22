@@ -4,6 +4,7 @@ import { useAuth } from './context/AuthContext';
 import LoginScreen from './LoginScreen';
 import WaitingApproval from './WaitingApproval';
 import { THEME, FontLoader } from './ui/theme';
+import AssessmentsView from './views/AssessmentsView';
 
 // ✅ Admin View
 import AdminView from './views/AdminView';
@@ -32,6 +33,9 @@ import NavItem from './components/ui/NavItem';
 import MasterTimelineView from './views/MasterTimelineView';
 import IndividualPlanner from './views/IndividualPlanner';
 import ConfigurationView from './views/ConfigurationView';
+
+// ✅ NEW: Weekly Coordination View
+import WeeklyCoordinationView from './views/WeeklyCoordinationView';
 
 // ------------------------
 // Error Boundary
@@ -69,7 +73,7 @@ class ErrorBoundary extends Component {
 }
 
 // ------------------------
-// Quick Add (Ctrl/Cmd + K) — kept as-is
+// Quick Add (Ctrl/Cmd + K)
 // ------------------------
 function QuickAddModal({
   open,
@@ -82,7 +86,7 @@ function QuickAddModal({
   onQuickAdd,
   showToast
 }) {
-  const [mode, setMode] = useState('CURR'); // CURR | CUSTOM
+  const [mode, setMode] = useState('CURR');
   const [studentId, setStudentId] = useState(defaultStudentId || '');
   const [status, setStatus] = useState('P');
   const [date, setDate] = useState(defaultDateISO || dateISO(new Date()));
@@ -259,7 +263,6 @@ export default function App() {
 
   const [viewState, setViewState] = useState('HOME');
 
-  // keep as ISO string ALWAYS
   const [activeDate, setActiveDate] = useState(dateISO(new Date()));
 
   const [toast, setToast] = useState(null);
@@ -274,7 +277,6 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   };
 
-  // ✅ Multi-School
   const [schools, setSchools] = useState([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState(null);
 
@@ -303,12 +305,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // If something still tries to route to DASHBOARD, send home (prevents dead state)
   useEffect(() => {
     if (viewState === 'DASHBOARD') setViewState('HOME');
   }, [viewState]);
 
-  // 1) init schools
   useEffect(() => {
     if (!user || !profile) return;
     const status = user.user_metadata?.status;
@@ -333,7 +333,6 @@ export default function App() {
     initSchools();
   }, [user, profile]);
 
-  // 2) load school data
   useEffect(() => {
     if (!selectedSchoolId) return;
 
@@ -538,6 +537,8 @@ export default function App() {
   if (initialLoading) return <LoadingScreen />;
 
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
+  const isCoordinator = isSupervisor || profile?.role === 'coordinator';
+
   const displayName = getDisplayName(profile, user);
   const firstName = getFirstName(displayName);
   const parentStudentId = (profile?.role === 'parent' && profile?.student_id) ? profile.student_id : null;
@@ -577,13 +578,21 @@ export default function App() {
             maxWidth: 1650,
             margin: '0 auto',
             width: '100%',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            height: viewState === 'ASSESSMENTS' ? '100vh' : 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            overflowY: viewState === 'ASSESSMENTS' ? 'hidden' : 'auto'
           }}
         >
           <ErrorBoundary>
-            {viewState === 'HOME' && <HomeMenu userName={firstName} onNavigate={setViewState} />}
-
-            {/* ✅ DASHBOARD HIDDEN FOR NOW */}
+            {viewState === 'HOME' && (
+              <HomeMenu
+                userName={firstName}
+                onNavigate={setViewState}
+                isCoordinator={isCoordinator}
+              />
+            )}
 
             {viewState === 'YEARLY' && (
               <MasterTimelineView
@@ -593,6 +602,18 @@ export default function App() {
                 activeDate={activeDate}
                 setActiveDate={setActiveDate}
                 showToast={showToast}
+              />
+            )}
+
+            {/* ✅ NEW VIEW */}
+            {viewState === 'COORDINATION' && (
+              <WeeklyCoordinationView
+                profile={profile}
+                showToast={showToast}
+                selectedSchoolId={selectedSchoolId}
+                classrooms={classrooms}
+                students={students}
+                masterPlans={masterPlans}
               />
             )}
 
@@ -619,6 +640,15 @@ export default function App() {
               />
             )}
 
+            {viewState === 'ASSESSMENTS' && (
+              <AssessmentsView
+                profile={profile}
+                classrooms={classrooms}
+                curriculumAreas={curriculumAreas}
+                showToast={showToast}
+              />
+            )}
+
             {viewState === 'CONFIG' && <ConfigurationView isReadOnly={!isSupervisor} />}
 
             {viewState === 'ADMIN' && <AdminView />}
@@ -630,7 +660,7 @@ export default function App() {
 }
 
 // ------------------------
-// SIDEBAR (Dashboard removed)
+// SIDEBAR
 // ------------------------
 function Sidebar({
   firstName,
@@ -643,6 +673,7 @@ function Sidebar({
   onSchoolChange
 }) {
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
+  const isCoordinator = isSupervisor || profile?.role === 'coordinator';
 
   const handleSafeSignOut = async () => {
     const { error } = await supabase.auth.signOut();
@@ -705,11 +736,15 @@ function Sidebar({
 
       <div style={{ padding: '10px 0', flex: 1 }}>
         <NavItem label="Home" active={viewState === 'HOME'} onClick={() => onNavigate('HOME')} />
-
-        {/* ✅ DASHBOARD REMOVED */}
-
         <NavItem label="Scope & Sequence" active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')} />
+
+        {/* ✅ NEW MENU ITEM */}
+        {isCoordinator && (
+          <NavItem label="Weekly Coordination" active={viewState === 'COORDINATION'} onClick={() => onNavigate('COORDINATION')} />
+        )}
+
         <NavItem label="Individual Plans" active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} />
+        <NavItem label="Assessments" active={viewState === 'ASSESSMENTS'} onClick={() => onNavigate('ASSESSMENTS')} />
         <NavItem label="Configuration" active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} />
 
         {isSupervisor && (
@@ -731,9 +766,9 @@ function Sidebar({
 }
 
 // ------------------------
-// HOME MENU (Dashboard card removed)
+// HOME MENU
 // ------------------------
-function HomeMenu({ userName, onNavigate }) {
+function HomeMenu({ userName, onNavigate, isCoordinator = false }) {
   return (
     <div style={{ minHeight: '92vh', padding: '60px 20px', background: THEME.bg, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={{ maxWidth: 1000, width: '100%' }}>
@@ -748,8 +783,21 @@ function HomeMenu({ userName, onNavigate }) {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 30 }}>
-          <HomeCard icon="🎓" title="Individual Plans" desc="Student tracking, reports and progress boards." onClick={() => onNavigate('INDIVIDUAL')} color={THEME.brandAccent} />
           <HomeCard icon="🗺️" title="Scope & Sequence" desc="Yearly timeline, themes and lessons." onClick={() => onNavigate('YEARLY')} color={THEME.brandYellow} />
+
+          {/* ✅ Optional Home shortcut (coordinators only) */}
+          {isCoordinator && (
+            <HomeCard
+              icon="📋"
+              title="Weekly Coordination"
+              desc="Meeting notes, follow-ups, and weekly action plans."
+              onClick={() => onNavigate('COORDINATION')}
+              color={THEME.brandAccent}
+            />
+          )}
+
+          <HomeCard icon="🎓" title="Individual Plans" desc="Student tracking, reports and progress boards." onClick={() => onNavigate('INDIVIDUAL')} color={THEME.brandAccent} />
+          <HomeCard icon="📝" title="Assessments" desc="Create report cards + view classroom summaries." onClick={() => onNavigate('ASSESSMENTS')} color={THEME.brandSecondary} />
           <HomeCard icon="⚙️" title="Configuration" desc="Manage classrooms, students, roles, and assessments." onClick={() => onNavigate('CONFIG')} color="#ddd" />
         </div>
       </div>

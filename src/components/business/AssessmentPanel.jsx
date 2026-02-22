@@ -1,220 +1,308 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { supabase } from '../../supabaseClient'; 
-import { THEME } from '../../ui/theme'; 
-import { dateISO, safeDate } from '../../utils/helpers';
-import Button from '../ui/Button';
-import Modal from '../ui/Modal';
-import { ChevronDown, ChevronRight } from 'lucide-react'; 
+import React, { useEffect, useState, useMemo } from 'react';
+import { supabase } from '../../supabaseClient';
+import { THEME } from '../../ui/theme';
+import { ChevronDown, ChevronRight, CheckCircle, Clock, Star } from 'lucide-react';
 
-// --- HELPERS ---
+// -------------------- SHARED UI & THEME --------------------
+const hexToRgb = (hex) => {
+  const h = (hex || '').replace('#', '').trim();
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return { r, g, b };
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return { r, g, b };
+  }
+  return { r: 0, g: 0, b: 0 };
+};
+
+const rgba = (hex, a = 1) => {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+};
+
+const UI = {
+  bg: THEME.bg,
+  card: THEME.cardBg,
+  text: THEME.text,
+  muted: THEME.textMuted,
+  primary: THEME.brandPrimary,
+  secondary: THEME.brandSecondary,
+  accent: THEME.brandAccent,
+  borderSoft: rgba(THEME.brandAccent, 0.28),
+};
+
+const ThemedCard = ({ children, style, className = '', onClick }) => (
+  <div
+    className={`mb-card ${className}`}
+    onClick={onClick}
+    style={{
+      backgroundColor: UI.card,
+      borderRadius: THEME.radius,
+      boxShadow: THEME.cardShadow,
+      border: `1px solid ${UI.borderSoft}`,
+      ...style,
+    }}
+  >
+    {children}
+  </div>
+);
+
+// -------------------- SCORE HELPERS --------------------
+
+const isSpecialToken = (v) => {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 'x' || s === 'na' || s === 'n/a' || s === 'absent';
+};
 
 const normalizeScore = (raw) => {
-  if (raw === null || raw === undefined || raw === '') return null;
-  const clean = String(raw).replace(/%/g, '').trim();
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (isSpecialToken(s)) return null;
+
+  const clean = s.replace(/%/g, '').trim();
   const num = parseFloat(clean);
-  return isNaN(num) ? null : num;
+  return Number.isFinite(num) ? num : null;
 };
 
 const formatScoreDisplay = (raw) => {
+  if (raw === null || raw === undefined) return '-';
+  const s = String(raw).trim();
+  if (!s) return '-';
+  if (isSpecialToken(s) || s.toUpperCase() === 'X') return 'X';
+
   const n = normalizeScore(raw);
   if (n === null) return '-';
-  const shown = Number.isInteger(n) ? n : Math.round(n * 10) / 10;
-  return `${shown}%`;
+  const shown = Number.isInteger(n) ? n : Math.round(n);
+  return String(shown);
 };
 
+// Montessori Color Scale (Mastery based, not competitive)
 const getScoreStyle = (rawVal) => {
-  const val = normalizeScore(rawVal);
-  if (val === null) return { color: '#B0BEC5' }; 
-  if (val >= 80) return { color: '#2E7D32', fontWeight: 800 }; // Green
-  if (val >= 55) return { color: '#F57F17', fontWeight: 800 }; // Orange
-  return { color: '#D32F2F', fontWeight: 800 }; // Red
-};
-
-const formatComment = (text) => {
-  if (!text) return '';
-  if (String(text).toUpperCase() === 'EMPTY') return '';
-  return text;
-};
-
-// --- SUB-COMPONENT: EDITABLE CELL ---
-const EditableCell = ({ scoreRec, assessmentId, skillId, onSave }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editScore, setEditScore] = useState('');
-  const [editComment, setEditComment] = useState('');
-  
-  useEffect(() => {
-    if (isEditing) {
-      setEditScore(scoreRec?.score_raw || '');
-      setEditComment(scoreRec?.comment || '');
-    }
-  }, [isEditing, scoreRec]);
-
-  const handleSave = (e) => {
-    e.stopPropagation(); 
-    onSave(assessmentId, skillId, editScore, editComment, scoreRec?.id);
-    setIsEditing(false);
-  };
-
-  const handleCancel = (e) => {
-    e.stopPropagation();
-    setIsEditing(false);
-  };
-
-  // --- EDIT POPUP MODE ---
-  if (isEditing) {
-    return (
-      <div 
-        onClick={(e) => e.stopPropagation()} 
-        style={{ 
-          // CRITICAL: This allows the absolute popup to anchor to THIS cell
-          position: 'relative', 
-          width: '100%',
-          height: '100%',
-          minHeight: 64
-        }}
-      >
-        <div style={{ 
-          position: 'absolute', 
-          top: -10, 
-          left: -10, 
-          width: 280, // Fixed width so it doesn't stretch
-          zIndex: 9999, // Ensure it sits ON TOP of everything
-          background: '#FFFFFF', 
-          border: `2px solid ${THEME.brandPrimary}`, 
-          padding: 16, 
-          boxShadow: `6px 6px 0px 0px ${THEME.brandAccent}`, // Hard shadow
-          borderRadius: 4
-        }}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display:'block', fontSize: 11, fontWeight: 700, color: THEME.textMuted, marginBottom: 4 }}>
-              SCORE %
-            </label>
-            <input
-              type="number" autoFocus value={editScore} onChange={(e) => setEditScore(e.target.value)}
-              placeholder="0-100"
-              style={{ 
-                width: '100%', padding: '8px', fontSize: 14, fontWeight: 700, color: THEME.text,
-                border: '1px solid #ddd', borderRadius: 0, outline: 'none', background: '#FAFAFA'
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-             <label style={{ display:'block', fontSize: 11, fontWeight: 700, color: THEME.textMuted, marginBottom: 4 }}>
-               NOTE
-             </label>
-            <textarea
-              rows={2} value={editComment} onChange={(e) => setEditComment(e.target.value)}
-              placeholder="Optional comment..."
-              style={{ 
-                width: '100%', padding: '8px', fontSize: 13, fontFamily: THEME.sansFont, color: THEME.text,
-                border: '1px solid #ddd', borderRadius: 0, outline: 'none', background: '#FAFAFA'
-              }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <Button variant="ghost" onClick={handleCancel} style={{ fontSize: 12, padding: '6px 12px' }}>Cancel</Button>
-            <Button onClick={handleSave} style={{ fontSize: 12, padding: '6px 16px', background: THEME.brandPrimary, color: '#fff' }}>Save</Button>
-          </div>
-        </div>
-      </div>
-    );
+  const s = String(rawVal ?? '').trim();
+  if (s && (isSpecialToken(s) || s.toUpperCase() === 'X')) {
+    return { color: THEME.textMuted, fontWeight: 700, fontStyle: 'italic' };
   }
 
-  // --- VIEW MODE ---
-  const hasScore = scoreRec && scoreRec.score_raw !== null;
-  const comment = scoreRec ? formatComment(scoreRec.comment) : '';
-  const scoreStyle = getScoreStyle(scoreRec?.score_raw);
+  const val = normalizeScore(rawVal);
+  if (val === null) return { color: THEME.textMuted };
+  
+  // 80+ = Mastered (Green)
+  // 50-79 = Progressing (Orange/Yellow)
+  // <50 = Presented / Needs Practice (Red/Grey)
+  if (val >= 80) return { color: '#2E7D32', fontWeight: 800 }; 
+  if (val >= 50) return { color: '#F57F17', fontWeight: 800 }; 
+  return { color: '#D32F2F', fontWeight: 800 }; 
+};
+
+const normKey = (s) =>
+  String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+// -------------------- SUB-COMPONENT: SCORE CELL --------------------
+
+const ScoreCell = ({ scoreRec }) => {
+  const raw = scoreRec?.score_raw;
+  const hasValue = raw !== null && raw !== undefined && String(raw).trim() !== '';
+  const scoreStyle = getScoreStyle(raw);
+  const comment = scoreRec?.comment ? scoreRec.comment : '';
 
   return (
-    <div 
-      onClick={() => setIsEditing(true)}
-      style={{ 
-        position: 'relative', // CRITICAL: Anchors the popup if it opens
-        cursor: 'pointer', 
-        padding: '12px 8px', 
-        height: '100%', 
+    <div
+      style={{
+        padding: '12px 8px',
+        height: '100%',
         minHeight: 64,
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
-        justifyContent: hasScore ? 'flex-start' : 'center',
-        transition: 'background 0.2s'
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: hasValue ? 'flex-start' : 'center',
+        backgroundColor: '#fff', 
+        borderRight: `1px solid ${UI.borderSoft}`
       }}
-      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F0F4F8'} 
-      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
     >
-      {hasScore ? (
+      {hasValue ? (
         <>
-          <div style={{ fontSize: 16, marginBottom: 6, ...scoreStyle }}>
-            {formatScoreDisplay(scoreRec.score_raw)}
+          <div style={{ fontSize: 16, marginBottom: 2, ...scoreStyle }}>
+            {formatScoreDisplay(raw)}
           </div>
+          
+          {/* COMMENT (Sticky Note Style) */}
           {comment && (
-            <div style={{
-              background: '#FFF9C4', 
-              border: `1px solid #FBC02D`, 
-              color: '#333',
-              fontSize: 11,
-              lineHeight: 1.3,
-              padding: '6px 8px',
-              width: '100%',
-              maxWidth: 160,
-              textAlign: 'left',
-              boxShadow: '2px 2px 0px 0px rgba(0,0,0,0.1)'
-            }}>
+            <div
+              style={{
+                background: '#FEF3C7',
+                border: `1px solid #FDE68A`,
+                color: '#92400E',
+                fontSize: 11,
+                lineHeight: 1.3,
+                padding: '4px 8px',
+                marginTop: 4,
+                width: 'fit-content',
+                maxWidth: 140,
+                minWidth: 40,
+                borderRadius: 4,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                textAlign: 'center',
+              }}
+            >
               {comment}
             </div>
           )}
         </>
       ) : (
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#eee' }} />
+        <div style={{ color: rgba(UI.text, 0.1), fontSize: 20 }}>-</div>
       )}
     </div>
   );
 };
 
+// -------------------- INSIGHTS PANEL (Montessori Style) --------------------
+
+const InsightsPanel = ({ areas }) => {
+  const analyzed = useMemo(() => {
+    const mastered = [];
+    const progressing = [];
+    let lowestSkill = null;
+    let lowestScore = 101;
+
+    areas.forEach(area => {
+        // Area Analysis
+        if (area.overallAverage !== null) {
+            if (area.overallAverage >= 80) mastered.push(area.name);
+            else if (area.overallAverage < 80) progressing.push(area.name);
+        }
+
+        // Find a specific skill that might need a "re-presentation"
+        area.groups.forEach(grp => {
+            if (grp.rowAverage !== null && grp.rowAverage < 60 && grp.rowAverage < lowestScore) {
+                lowestScore = grp.rowAverage;
+                lowestSkill = grp.name;
+            }
+        });
+    });
+
+    return { mastered, progressing, lowestSkill };
+  }, [areas]);
+
+  if (!analyzed.mastered.length && !analyzed.progressing.length) return null;
+
+  return (
+    <ThemedCard style={{ marginBottom: 24, padding: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 20 }}>
+        {/* Mastered */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2E7D32', fontWeight: 700, fontSize: 12, textTransform: 'uppercase' }}>
+                <CheckCircle size={16} /> Mastery Observed
+            </div>
+            <div style={{ fontSize: 13, color: THEME.text, fontWeight: 500, lineHeight: 1.4 }}>
+                {analyzed.mastered.length > 0 ? analyzed.mastered.join(', ') : 'Working towards mastery.'}
+            </div>
+        </div>
+
+        {/* Working On */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#D97706', fontWeight: 700, fontSize: 12, textTransform: 'uppercase' }}>
+                <Clock size={16} /> Currently Practicing
+            </div>
+            <div style={{ fontSize: 13, color: THEME.text, fontWeight: 500, lineHeight: 1.4 }}>
+                {analyzed.progressing.length > 0 ? analyzed.progressing.join(', ') : 'Consistent performance.'}
+            </div>
+        </div>
+
+        {/* Suggestion */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderLeft: `2px solid ${UI.borderSoft}`, paddingLeft: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: THEME.brandPrimary, fontWeight: 700, fontSize: 12, textTransform: 'uppercase' }}>
+                <Star size={16} /> Recommended Focus
+            </div>
+            <div style={{ fontSize: 13, color: THEME.text, fontWeight: 500, lineHeight: 1.4 }}>
+                {analyzed.lowestSkill ? (
+                    <>Consider re-presenting or practicing: <strong>{analyzed.lowestSkill}</strong>.</>
+                ) : 'Continue with current curriculum progression.'}
+            </div>
+        </div>
+    </ThemedCard>
+  );
+};
+
+// -------------------- MAIN: INDIVIDUAL REPORT --------------------
 
 export default function AssessmentPanel({ profile, student, classroomId, showToast }) {
   const [loading, setLoading] = useState(false);
-  const [assessments, setAssessments] = useState([]);
+
+  // CORE DATA
+  const [templates, setTemplates] = useState([]); 
+  const [assessmentMap, setAssessmentMap] = useState({}); 
   const [skills, setSkills] = useState([]);
+  const [domains, setDomains] = useState([]);
   const [areas, setAreas] = useState([]);
   const [allScores, setAllScores] = useState([]);
   
   const [filterArea, setFilterArea] = useState('ALL');
-  // Initialize as empty object -> collapsed by default
+  const [filterTemplate, setFilterTemplate] = useState('ALL');
   const [expandedAreas, setExpandedAreas] = useState({});
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [templates, setTemplates] = useState([]);
-  const [newTemplateId, setNewTemplateId] = useState('');
-  const [newTitle, setNewTitle] = useState('');
-  const [newDate, setNewDate] = useState(dateISO(new Date()));
-
-  // --- FETCH ---
   const refresh = async () => {
     if (!student?.id) return;
     setLoading(true);
     try {
-      const { data: assessData } = await supabase.from('student_assessments').select('*').eq('student_id', student.id).order('assessment_date', { ascending: false });
-      setAssessments(assessData || []);
+      // 1) Templates
+      const { data: tmplData } = await supabase
+        .from('assessment_templates')
+        .select('*')
+        .order('default_date', { ascending: true });
 
-      const { data: tmplData } = await supabase.from('assessment_templates').select('id, title').order('title');
-      setTemplates(tmplData || []);
-      if (tmplData?.length) setNewTemplateId(tmplData[0].id);
+      const relevantTemplates = (tmplData || []).filter((t) =>
+        (t.classroom_ids || []).map(String).includes(String(classroomId || student.classroom_id))
+      );
+      setTemplates(relevantTemplates);
 
-      const { data: skillData } = await supabase.from('assessment_skills').select('id, name, area_id, sort_order').order('sort_order');
+      // 2) Student assessments (runs)
+      const { data: assessData } = await supabase
+        .from('student_assessments')
+        .select('*')
+        .eq('student_id', student.id);
+
+      const aMap = {};
+      (assessData || []).forEach((a) => {
+        if (a.template_id) aMap[a.template_id] = a;
+      });
+      setAssessmentMap(aMap);
+
+      // 3) Domains + Skills + Areas
+      const { data: domainData } = await supabase.from('assessment_domains').select('*');
+      setDomains(domainData || []);
+
+      const { data: skillData } = await supabase
+        .from('assessment_skills')
+        .select('id, name, area_id, domain_id, sort_order')
+        .order('sort_order');
       setSkills(skillData || []);
 
       const { data: areaData } = await supabase.from('curriculum_areas').select('id, name').order('name');
       setAreas(areaData || []);
 
+      // 4) Scores (Individual Only)
       if (assessData?.length > 0) {
-        const ids = assessData.map(a => a.id);
-        const { data: scoreData } = await supabase.from('student_assessment_scores').select('*').in('assessment_id', ids);
+        const ids = assessData.map((a) => a.id);
+        const { data: scoreData } = await supabase
+          .from('student_assessment_scores')
+          .select('id, assessment_id, skill_id, score_raw, comment, created_at, classroom_id')
+          .in('assessment_id', ids);
+
         setAllScores(scoreData || []);
       } else {
         setAllScores([]);
       }
+
     } catch (e) {
       console.error(e);
       showToast?.({ type: 'error', message: 'Failed to load data.' });
@@ -223,289 +311,387 @@ export default function AssessmentPanel({ profile, student, classroomId, showToa
     }
   };
 
-  useEffect(() => { refresh(); }, [student?.id]);
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [student?.id, classroomId]);
 
-  // --- SAVE ---
-  const handleSaveScore = async (assessmentId, skillId, newVal, newComment, existingScoreId) => {
-    try {
-      const payload = {
-        assessment_id: assessmentId,
-        skill_id: skillId,
-        score_raw: newVal,
-        comment: newComment,
-        ...(existingScoreId ? { id: existingScoreId } : {}) 
-      };
-      const { data, error } = await supabase.from('student_assessment_scores').upsert(payload).select();
-      if (error) throw error;
-      setAllScores(prev => {
-        const other = prev.filter(s => !(String(s.assessment_id) === String(assessmentId) && String(s.skill_id) === String(skillId)));
-        return [...other, data[0]];
-      });
-      showToast?.({ type: 'success', message: 'Saved' });
-    } catch (e) {
-      showToast?.({ type: 'error', message: 'Save failed' });
-    }
-  };
 
-  // --- PROCESS DATA ---
+  // Score index: choose latest if duplicates exist
   const scoreIndex = useMemo(() => {
     const m = new Map();
-    for (const s of allScores) {
-      m.set(`${String(s.assessment_id)}|${String(s.skill_id)}`, s);
+    const newer = (a, b) => {
+      const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+      if (ta !== tb) return ta > tb;
+      const ida = Number(a?.id || 0);
+      const idb = Number(b?.id || 0);
+      return ida > idb;
+    };
+
+    for (const s of allScores || []) {
+      const key = `${String(s.assessment_id)}|${String(s.skill_id)}`;
+      const cur = m.get(key);
+      if (!cur || newer(s, cur)) m.set(key, s);
     }
     return m;
   }, [allScores]);
 
-  const processedData = useMemo(() => {
-    if (!assessments.length || !skills.length) return { areas: [] };
-    const getAreaName = (id) => areas.find(a => String(a.id) === String(id))?.name || 'General';
-
-    // 1. Group Skills
-    const grouped = {};
-    skills.forEach(skill => {
-      const areaId = skill.area_id ?? 'uncategorized';
-      if (!grouped[areaId]) grouped[areaId] = { id: areaId, name: getAreaName(areaId), skills: [] };
-      
-      const hasData = assessments.some(a => scoreIndex.has(`${a.id}|${skill.id}`));
-      if (hasData) grouped[areaId].skills.push(skill);
+  // skill -> owning template (via domain)
+  const skillTemplateMap = useMemo(() => {
+    const map = {};
+    const domById = new Map((domains || []).map((d) => [String(d.id), d]));
+    (skills || []).forEach((s) => {
+      const dom = domById.get(String(s.domain_id));
+      if (dom) map[s.id] = dom.template_id;
     });
+    return map;
+  }, [skills, domains]);
 
-    let activeAreas = Object.values(grouped).filter(g => g.skills.length > 0);
-    if (filterArea !== 'ALL') activeAreas = activeAreas.filter(a => String(a.id) === String(filterArea));
+  // visible templates by filter
+  const visibleTemplates = useMemo(() => {
+    if (filterTemplate === 'ALL') return templates;
+    return templates.filter((t) => String(t.id) === String(filterTemplate));
+  }, [templates, filterTemplate]);
 
-    // 2. Averages
-    activeAreas.forEach(area => {
-      area.averages = {}; 
-      area.overallAverage = 0; 
-      let areaTotalSum = 0, areaTotalCount = 0;
+  const processedData = useMemo(() => {
+    if (!visibleTemplates.length || !skills.length) return { areas: [] };
 
-      assessments.forEach(assess => {
-        let total = 0, count = 0;
-        area.skills.forEach(skill => {
-          const rec = scoreIndex.get(`${String(assess.id)}|${String(skill.id)}`);
-          const val = normalizeScore(rec?.score_raw);
-          if (val !== null) { total += val; count++; }
+    const areaById = new Map((areas || []).map((a) => [String(a.id), a]));
+    const getAreaName = (id) => areaById.get(String(id))?.name || 'General';
+
+    const visibleTemplateIds = new Set(visibleTemplates.map((t) => String(t.id)));
+
+    // areaId -> { id, name, groupsMap }
+    const bucket = new Map();
+
+    const ensureArea = (areaId) => {
+      const key = String(areaId);
+      if (!bucket.has(key)) bucket.set(key, { id: key, name: getAreaName(key), groupsMap: new Map() });
+      return bucket.get(key);
+    };
+
+    // Build grouped skills
+    for (const sk of skills) {
+      const tId = String(skillTemplateMap[sk.id] ?? '');
+      if (!tId || !visibleTemplateIds.has(tId)) continue;
+
+      const areaId = sk.area_id ? String(sk.area_id) : 'uncategorized';
+      const areaObj = ensureArea(areaId);
+
+      const gKey = `${areaId}::${normKey(sk.name)}`;
+      if (!areaObj.groupsMap.has(gKey)) {
+        areaObj.groupsMap.set(gKey, {
+          key: gKey,
+          name: String(sk.name || '').trim() || 'Untitled Skill',
+          areaId,
+          sortOrder: Number.isFinite(sk.sort_order) ? sk.sort_order : 999999,
+          skillIdsByTemplate: {}, 
+          cells: {}, 
+          rowAverage: null,
+          delta: null,
         });
-        if (count > 0) {
-          area.averages[assess.id] = Math.round(total / count);
-          areaTotalSum += area.averages[assess.id];
-          areaTotalCount++;
+      }
+
+      const grp = areaObj.groupsMap.get(gKey);
+      grp.sortOrder = Math.min(grp.sortOrder, Number.isFinite(sk.sort_order) ? sk.sort_order : 999999);
+
+      if (!grp.skillIdsByTemplate[tId]) grp.skillIdsByTemplate[tId] = [];
+      grp.skillIdsByTemplate[tId].push(String(sk.id));
+    }
+
+    // Pick best record
+    const pickBestRecord = (assessmentId, skillIds) => {
+      if (!assessmentId || !skillIds?.length) return null;
+      let best = null;
+
+      const rankOf = (rec) => {
+        if (!rec) return 0;
+        const raw = rec.score_raw;
+        const s = String(raw ?? '').trim();
+        const numeric = normalizeScore(raw);
+        if (numeric !== null) return 4;
+        if (s && (s.toUpperCase() === 'X' || isSpecialToken(s))) return 3;
+        if (rec.comment) return 2;
+        return 1;
+      };
+
+      const newer = (a, b) => {
+        const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+        if (ta !== tb) return ta > tb;
+        const ida = Number(a?.id || 0);
+        const idb = Number(b?.id || 0);
+        return ida > idb;
+      };
+
+      for (const sid of skillIds) {
+        const rec = scoreIndex.get(`${String(assessmentId)}|${String(sid)}`);
+        if (!rec) continue;
+        const r = rankOf(rec);
+        if (!best || r > best.rank || (r === best.rank && newer(rec, best.rec))) {
+          best = { rec, rank: r };
+        }
+      }
+      return best?.rec || null;
+    };
+
+    // Build final areas list & Filter Empty Rows
+    let areaList = Array.from(bucket.values()).map((a) => {
+      const groups = Array.from(a.groupsMap.values())
+        .filter(grp => {
+            // Check if any template has data for this group
+            let hasData = false;
+            visibleTemplates.forEach(tmpl => {
+                const tId = String(tmpl.id);
+                const ass = assessmentMap[tmpl.id];
+                const skillIds = grp.skillIdsByTemplate[tId] || [];
+                const bestRec = ass ? pickBestRecord(ass.id, skillIds) : null;
+                if (bestRec && (bestRec.score_raw || bestRec.comment)) {
+                    hasData = true;
+                }
+            });
+            return hasData;
+        })
+        .sort((x, y) => x.sortOrder - y.sortOrder);
+      
+      return { id: a.id, name: a.name, groups };
+    });
+    
+    // Remove areas that have no groups left
+    areaList = areaList.filter(a => a.groups.length > 0);
+
+    // filter by area selector
+    if (filterArea !== 'ALL') {
+      areaList = areaList.filter((a) => String(a.id) === String(filterArea));
+    }
+
+    // Build cells + averages (Student Only)
+    for (const area of areaList) {
+      for (const grp of area.groups) {
+        let sum = 0;
+        let cnt = 0;
+
+        visibleTemplates.forEach((tmpl) => {
+          const tId = String(tmpl.id);
+          const ass = assessmentMap[tmpl.id];
+          const skillIds = grp.skillIdsByTemplate[tId] || [];
+
+          const bestRec = ass ? pickBestRecord(ass.id, skillIds) : null;
+          const numVal = bestRec ? normalizeScore(bestRec.score_raw) : null;
+          if (numVal !== null) {
+            sum += numVal;
+            cnt += 1;
+          }
+          
+          grp.cells[tId] = {
+            templateId: tId,
+            assessmentId: ass?.id || null,
+            record: bestRec,
+            numVal,
+          };
+        });
+
+        grp.rowAverage = cnt > 0 ? Math.round(sum / cnt) : null;
+
+        // Delta
+        if (visibleTemplates.length >= 2) {
+          const firstId = String(visibleTemplates[0].id);
+          const lastId = String(visibleTemplates[visibleTemplates.length - 1].id);
+          const a = grp.cells[firstId]?.numVal ?? null;
+          const b = grp.cells[lastId]?.numVal ?? null;
+          grp.delta = a !== null && b !== null ? Math.round(b - a) : null;
+        } else {
+          grp.delta = null;
+        }
+      }
+
+      // Area averages
+      area.averages = {};
+      area.overallAverage = null;
+
+      let areaAvgSum = 0;
+      let areaAvgCnt = 0;
+
+      visibleTemplates.forEach((tmpl) => {
+        const tId = String(tmpl.id);
+        let ts = 0;
+        let tc = 0;
+
+        area.groups.forEach((grp) => {
+          const v = grp.cells[tId]?.numVal ?? null;
+          if (v !== null) {
+            ts += v;
+            tc += 1;
+          }
+        });
+
+        if (tc > 0) {
+          const avg = Math.round(ts / tc);
+          area.averages[tId] = avg;
+          areaAvgSum += avg;
+          areaAvgCnt += 1;
+        } else {
+          area.averages[tId] = null;
         }
       });
-      area.overallAverage = areaTotalCount > 0 ? Math.round(areaTotalSum / areaTotalCount) : null;
-    });
 
-    return { areas: activeAreas };
-  }, [assessments, skills, areas, allScores, filterArea, scoreIndex]);
+      area.overallAverage = areaAvgCnt > 0 ? Math.round(areaAvgSum / areaAvgCnt) : null;
+    }
 
-  // --- COLLAPSE HANDLER ---
-  const toggleArea = (areaId) => {
-    setExpandedAreas(prev => ({ ...prev, [areaId]: !prev[areaId] }));
-  };
+    return { areas: areaList };
+  }, [visibleTemplates, skills, areas, filterArea, skillTemplateMap, assessmentMap, scoreIndex]);
 
-  const handleCreate = async () => {
-    if (!newTemplateId) return;
-    try {
-      const selectedTmpl = templates.find(t => String(t.id) === String(newTemplateId));
-      const payload = {
-        student_id: student.id,
-        classroom_id: classroomId || student.classroom_id,
-        teacher_id: profile?.id,
-        template_id: newTemplateId,
-        title: newTitle || selectedTmpl?.title || 'New Assessment',
-        kind: 'ASSESSMENT_2',
-        assessment_date: newDate
-      };
-      const { error } = await supabase.from('student_assessments').insert(payload);
-      if (error) throw error;
-      setCreateOpen(false); setNewTitle(''); refresh();
-    } catch (e) { showToast?.({ type: 'error', message: e.message }); }
-  };
+  const toggleArea = (areaId) => setExpandedAreas((prev) => ({ ...prev, [areaId]: !prev[areaId] }));
 
   if (!student) return <div style={{ padding: 20 }}>Select a student.</div>;
 
   return (
-    <div style={{ padding: '20px 40px', maxWidth: 1400, margin: '0 auto', fontFamily: THEME.sansFont, color: THEME.text }}>
-      
-      {/* HEADER SECTION */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          {/* Hexagon Icon */}
-          <div style={{ 
-            width: 50, height: 50, 
-            background: THEME.brandYellow, 
-            clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: 24
-          }}>
-            📋
-          </div>
-          <div>
-            <h1 style={{ fontFamily: THEME.serifFont, fontSize: 32, margin: 0, color: THEME.brandPrimary }}>
-              Progress <span style={{ color: THEME.brandSecondary }}>Report</span>
-            </h1>
-            <p style={{ margin: '4px 0 0', color: THEME.textMuted, fontWeight: 500 }}>
-              {student.first_name} {student.last_name}
-            </p>
-          </div>
-        </div>
-
+    <div style={{ fontFamily: THEME.sansFont, color: THEME.text }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        
         <div style={{ display: 'flex', gap: 12 }}>
           <select
             value={filterArea}
             onChange={(e) => setFilterArea(e.target.value)}
-            style={{ 
-              padding: '10px 16px', borderRadius: 0, 
-              border: '1px solid #ddd', 
-              color: THEME.text, fontWeight: 600, 
-              outline: 'none', cursor: 'pointer', background: '#fff',
-              boxShadow: '2px 2px 0px 0px #eee'
-            }}
+            style={{ padding: '8px 12px', border: `1px solid ${UI.borderSoft}`, borderRadius: 6, color: THEME.text, fontWeight: 600, background: '#fff', fontSize: 13 }}
           >
             <option value="ALL">All Areas</option>
-            {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {areas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterTemplate}
+            onChange={(e) => setFilterTemplate(e.target.value)}
+            style={{ padding: '8px 12px', border: `1px solid ${UI.borderSoft}`, borderRadius: 6, color: THEME.text, fontWeight: 600, background: '#fff', fontSize: 13 }}
+          >
+            <option value="ALL">All Assessments</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
           </select>
         </div>
       </div>
+    
+      {/* INSIGHTS PANEL */}
+      <InsightsPanel areas={processedData.areas} />
 
-      {/* MATRIX TABLE CARD */}
-      <div style={{ 
-        background: '#fff', 
-        border: 'none',
-        // THE HARD SHADOW
-        boxShadow: `6px 6px 0px 0px ${THEME.brandAccent}`,
-        borderTop: `6px solid ${THEME.brandSecondary}` 
-      }}>
+      <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
-              <tr style={{ borderBottom: '2px solid #eee' }}>
-                <th style={{ textAlign: 'left', padding: 20, color: THEME.textMuted, width: 250, textTransform: 'uppercase', fontSize: 11, letterSpacing: 1, fontWeight: 700 }}>
+              <tr style={{ background: rgba(UI.primary, 0.04), borderBottom: `1px solid ${UI.borderSoft}` }}>
+                <th style={{ textAlign: 'left', padding: '14px 20px', color: UI.muted, width: 250, textTransform: 'uppercase', fontSize: 11, letterSpacing: 1, fontWeight: 700 }}>
                   Skill / Criteria
                 </th>
-                
-                {assessments.map(a => (
-                  <th key={a.id} style={{ padding: 16, minWidth: 160, textAlign: 'center' }}>
-                    <div style={{ fontWeight: 700, color: THEME.text, fontSize: 15, fontFamily: THEME.serifFont }}>{a.title}</div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: THEME.brandSecondary, marginTop: 4 }}>{safeDate(a.assessment_date)}</div>
-                  </th>
-                ))}
-
-                <th style={{ padding: 16, minWidth: 100, textAlign: 'center', background: '#FAFAFA', borderLeft: '1px solid #eee' }}>
-                  <div style={{ fontWeight: 800, color: THEME.text, fontSize: 12 }}>AVG</div>
+                {visibleTemplates.map((tmpl) => {
+                    return (
+                        <th key={tmpl.id} style={{ padding: 14, minWidth: 160, textAlign: 'center', borderLeft: `1px solid ${UI.borderSoft}` }}>
+                            <div style={{ fontWeight: 700, color: UI.text, fontSize: 14, fontFamily: THEME.serifFont }}>{tmpl.title}</div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary, marginTop: 4 }}>{tmpl.default_date || 'No Date'}</div>
+                        </th>
+                    );
+                })}
+                <th style={{ padding: 14, minWidth: 100, textAlign: 'center', background: '#FAFAFA', borderLeft: `1px solid ${UI.borderSoft}` }}>
+                  <div style={{ fontWeight: 800, color: UI.text, fontSize: 11 }}>AVG</div>
                 </th>
               </tr>
             </thead>
 
             <tbody>
-              {processedData.areas.map(area => {
+              {processedData.areas.map((area) => {
                 const isExpanded = !!expandedAreas[area.id];
-                
                 return (
                   <React.Fragment key={area.id}>
-                    {/* CATEGORY HEADER ROW (Click to Expand) */}
-                    <tr 
-                      onClick={() => toggleArea(area.id)}
-                      style={{ background: '#FCFCFC', cursor: 'pointer', borderBottom: '1px solid #eee' }}
-                    > 
-                      <td style={{ padding: '16px 20px', fontWeight: 800, color: THEME.brandPrimary, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                         {area.name.toUpperCase()}
+                    <tr onClick={() => toggleArea(area.id)} style={{ background: '#FCFCFC', cursor: 'pointer', borderBottom: `1px solid ${UI.borderSoft}` }}>
+                      <td style={{ padding: '14px 20px', fontWeight: 800, color: UI.primary, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {String(area.name || 'GENERAL').toUpperCase()}
                       </td>
-                      
-                      {assessments.map(a => {
-                        const avg = area.averages[a.id];
-                        const style = avg ? getScoreStyle(avg) : { color: '#ccc' };
+
+                      {visibleTemplates.map((tmpl) => {
+                        const tId = String(tmpl.id);
+                        const avg = area.averages?.[tId] ?? null;
+                        
                         return (
-                          <td key={a.id} style={{ textAlign: 'center', ...style, fontSize: 15 }}>
-                            {avg ? `${avg}%` : '-'}
+                          <td key={tmpl.id} style={{ textAlign: 'center', fontSize: 14, verticalAlign: 'middle', borderLeft: `1px solid ${UI.borderSoft}` }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                <div style={getScoreStyle(avg)}>{formatScoreDisplay(avg)}</div>
+                            </div>
                           </td>
                         );
                       })}
-                      <td style={{ textAlign: 'center', fontWeight: 800, color: THEME.text, background: '#FAFAFA', borderLeft: '1px solid #eee' }}>
-                        {area.overallAverage ? `${area.overallAverage}%` : '-'}
+
+                      <td style={{ textAlign: 'center', fontWeight: 800, color: UI.text, background: '#FAFAFA', borderLeft: `1px solid ${UI.borderSoft}` }}>
+                        {formatScoreDisplay(area.overallAverage)}
                       </td>
                     </tr>
 
-                    {/* SKILL ROWS (Hidden unless Expanded) */}
-                    {isExpanded && area.skills.map(skill => {
-                      let skillSum = 0, skillCount = 0;
-                      assessments.forEach(a => {
-                        const r = scoreIndex.get(`${a.id}|${skill.id}`);
-                        const val = normalizeScore(r?.score_raw);
-                        if(val !== null) { skillSum += val; skillCount++; }
-                      });
-                      const skillAvg = skillCount > 0 ? Math.round(skillSum / skillCount) : null;
-                      const avgStyle = skillAvg ? getScoreStyle(skillAvg) : { color: '#ccc' };
-
-                      return (
-                        <tr key={skill.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                          <td style={{ padding: '12px 20px', color: '#546E7A', verticalAlign: 'middle', fontWeight: 500, paddingLeft: 46 }}>
-                            {skill.name}
-                          </td>
-
-                          {assessments.map(a => (
-                            <td key={`${a.id}-${skill.id}`} style={{ padding: 0, borderLeft: '1px solid #fafafa', verticalAlign: 'top' }}>
-                              <EditableCell
-                                assessmentId={a.id} skillId={skill.id}
-                                scoreRec={scoreIndex.get(`${a.id}|${skill.id}`)}
-                                onSave={handleSaveScore}
-                              />
+                    {isExpanded &&
+                      area.groups.map((grp) => {
+                        return (
+                          <tr key={grp.key} style={{ borderBottom: `1px solid ${UI.borderSoft}` }}>
+                            <td style={{ padding: '12px 20px', color: '#546E7A', verticalAlign: 'middle', fontWeight: 500, paddingLeft: 46, fontSize: 13 }}>
+                              {grp.name}
                             </td>
-                          ))}
 
-                          <td style={{ textAlign: 'center', verticalAlign: 'middle', background: '#FAFAFA', borderLeft: '1px solid #eee', ...avgStyle }}>
-                            {skillAvg ? `${skillAvg}%` : '-'}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            {visibleTemplates.map((tmpl) => {
+                              const tId = String(tmpl.id);
+                              const cell = grp.cells[tId];
+
+                              return (
+                                <td key={`${tmpl.id}-${grp.key}`} style={{ padding: 0, verticalAlign: 'top' }}>
+                                  <ScoreCell
+                                    scoreRec={cell?.record || null}
+                                  />
+                                </td>
+                              );
+                            })}
+
+                            <td
+                              style={{
+                                textAlign: 'center',
+                                background: '#FAFAFA',
+                                borderLeft: `1px solid ${UI.borderSoft}`,
+                                fontWeight: 800,
+                                color: UI.text,
+                                padding: '0 10px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 64 }}>
+                                <div style={{ ...getScoreStyle(grp.rowAverage), fontSize: 13 }}>{formatScoreDisplay(grp.rowAverage)}</div>
+
+                                {grp.delta !== null && (
+                                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 800, color: grp.delta >= 0 ? '#2E7D32' : '#D32F2F' }}>
+                                    {grp.delta >= 0 ? `+${grp.delta}` : `${grp.delta}`}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </React.Fragment>
                 );
               })}
+
               {processedData.areas.length === 0 && (
-                 <tr><td colSpan={10} style={{padding: 40, textAlign: 'center', color: '#999'}}>No data available for this filter.</td></tr>
+                <tr>
+                  <td colSpan={10} style={{ padding: 40, textAlign: 'center', color: UI.muted, fontSize: 13 }}>
+                    {loading ? 'Loading...' : 'No data found for this filter.'}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* CREATE MODAL */}
-      {createOpen && (
-        <Modal title="New Assessment" onClose={() => setCreateOpen(false)} width={450}>
-          <div style={{ display: 'grid', gap: 16 }}>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: THEME.textMuted }}>TEMPLATE</label>
-              <select 
-                value={newTemplateId} onChange={e => setNewTemplateId(e.target.value)}
-                style={{ width: '100%', padding: 10, marginTop: 6, border: '1px solid #ddd', background: '#fff', color: THEME.text }}
-              >
-                {templates.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: THEME.textMuted }}>TITLE</label>
-              <input 
-                value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="e.g. Winter Term Evaluation"
-                style={{ width: '100%', padding: 10, marginTop: 6, border: '1px solid #ddd', color: THEME.text }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: THEME.textMuted }}>DATE</label>
-              <input 
-                type="date" value={newDate} onChange={e => setNewDate(e.target.value)}
-                style={{ width: '100%', padding: 10, marginTop: 6, border: '1px solid #ddd', color: THEME.text }}
-              />
-            </div>
-            <div style={{ textAlign: 'right', marginTop: 10 }}>
-              <Button onClick={handleCreate} style={{ background: THEME.brandSecondary, color: THEME.text }}>
-                Create
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      </ThemedCard>
     </div>
   );
 }

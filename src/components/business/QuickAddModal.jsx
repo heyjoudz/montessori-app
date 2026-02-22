@@ -1,7 +1,168 @@
 import { useEffect, useMemo, useState } from 'react';
 import { THEME } from '../../ui/theme';
-import Card from '../ui/Card';
-import Button from '../ui/Button';
+
+// ---------- SHARED UI ----------
+const hexToRgb = (hex) => {
+  const h = (hex || '').replace('#', '').trim();
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return { r, g, b };
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return { r, g, b };
+  }
+  return { r: 0, g: 0, b: 0 };
+};
+
+const rgba = (hex, a = 1) => {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+};
+
+const UI = {
+  bg: THEME.bg,
+  card: THEME.cardBg,
+  text: THEME.text,
+  muted: THEME.textMuted,
+  primary: THEME.brandPrimary,
+  borderSoft: rgba(THEME.brandAccent, 0.28),
+};
+
+const ThemedCard = ({ children, style, onMouseDown }) => (
+  <div
+    onMouseDown={onMouseDown}
+    style={{
+      backgroundColor: UI.card,
+      borderRadius: THEME.radius,
+      boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+      border: `1px solid ${UI.borderSoft}`,
+      overflow: 'visible',
+      ...style,
+    }}
+  >
+    {children}
+  </div>
+);
+
+const FormLabel = ({ children, style }) => (
+  <label
+    style={{
+      display: 'block',
+      fontSize: 10,
+      fontWeight: 700,
+      color: UI.muted,
+      marginBottom: 6,
+      textTransform: 'uppercase',
+      letterSpacing: '0.5px',
+      fontFamily: THEME.sansFont,
+      ...style,
+    }}
+  >
+    {children}
+  </label>
+);
+
+const Field = ({ as = 'input', style, onFocus, onBlur, children, ...props }) => {
+  const Comp = as;
+  return (
+    <Comp
+      {...props}
+      style={{
+        width: '100%',
+        padding: '10px 14px',
+        borderRadius: THEME.radius,
+        border: `1px solid ${UI.borderSoft}`,
+        fontSize: 13,
+        outline: 'none',
+        boxSizing: 'border-box',
+        fontFamily: THEME.sansFont,
+        color: UI.text,
+        backgroundColor: '#fff',
+        transition: 'all 0.15s ease',
+        ...(as === 'select' ? { cursor: 'pointer', appearance: 'none' } : null),
+        ...style,
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = UI.primary;
+        e.currentTarget.style.boxShadow = `0 0 0 3px ${rgba(UI.primary, 0.12)}`;
+        onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderColor = UI.borderSoft;
+        e.currentTarget.style.boxShadow = 'none';
+        onBlur?.(e);
+      }}
+    >
+      {children}
+    </Comp>
+  );
+};
+
+const StyledButton = ({ variant = 'primary', children, style, ...props }) => {
+  const base = {
+    borderRadius: THEME.radius,
+    fontFamily: THEME.sansFont,
+    fontWeight: 600,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '8px 16px',
+    fontSize: 12,
+    border: 'none',
+    transition: 'transform 100ms ease, box-shadow 100ms ease',
+    userSelect: 'none',
+    whiteSpace: 'nowrap',
+  };
+
+  const variants = {
+    primary: {
+      background: UI.primary,
+      color: '#fff',
+      boxShadow: `2px 2px 0px 0px ${rgba(THEME.brandAccent, 0.6)}`,
+    },
+    ghost: {
+      background: 'transparent',
+      color: UI.muted,
+      border: '1px solid transparent',
+      boxShadow: 'none',
+    }
+  };
+
+  return (
+    <button
+      {...props}
+      style={{ ...base, ...(variants[variant] || variants.primary), ...style }}
+      onMouseDown={(e) => {
+        if (variant !== 'ghost') {
+          e.currentTarget.style.transform = 'translate(1px, 1px)';
+          e.currentTarget.style.boxShadow = `1px 1px 0px 0px ${UI.borderSoft}`;
+        }
+      }}
+      onMouseUp={(e) => {
+        if (variant !== 'ghost') {
+          e.currentTarget.style.transform = 'translate(0, 0)';
+          e.currentTarget.style.boxShadow = variants[variant].boxShadow;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (variant !== 'ghost') {
+          e.currentTarget.style.transform = 'translate(0, 0)';
+          e.currentTarget.style.boxShadow = variants[variant].boxShadow;
+        }
+      }}
+    >
+      {children}
+    </button>
+  );
+};
+
 
 const STATUS_OPTIONS = [
   { value: 'P', label: 'To Present' },
@@ -52,27 +213,19 @@ export default function QuickAddModal({
   // --- options ---
   const areaOptions = useMemo(() => {
     const map = new Map();
-
-    // prefer explicit curriculumAreas
     for (const a of curriculumAreas || []) {
       if (a?.name) map.set(a.name, a.name);
     }
-
-    // fallback: derive from curriculum activities
     for (const c of curriculum || []) {
       const n = c?.curriculum_areas?.name || c?.area || '';
       if (n) map.set(n, n);
     }
-
     map.set('General', 'General');
-
     return Array.from(map.values()).sort((x, y) => x.localeCompare(y));
   }, [curriculumAreas, curriculum]);
 
   const categoryOptions = useMemo(() => {
     if (!area) return [];
-
-    // derive categories used by activities under chosen area (most robust)
     const catIds = new Set();
     for (const c of curriculum || []) {
       const aName = c?.curriculum_areas?.name || c?.area || '';
@@ -93,9 +246,7 @@ export default function QuickAddModal({
       if (nm) names.push(nm);
     }
 
-    // fallback: if we couldn't resolve categories, show all categories
     const fallback = (curriculumCategories || []).map(c => c?.name).filter(Boolean);
-
     const out = (names.length ? names : fallback).filter(Boolean);
     return Array.from(new Set(out)).sort((x, y) => x.localeCompare(y));
   }, [area, curriculum, curriculumCategories]);
@@ -107,7 +258,6 @@ export default function QuickAddModal({
     const list = (curriculum || []).filter(c => {
       const aName = clean(c?.curriculum_areas?.name || c?.area).toLowerCase();
       if (a && aName !== a) return false;
-
       if (cat) {
         const catName = clean(c?.curriculum_categories?.name || c?.category).toLowerCase();
         if (catName !== cat) return false;
@@ -115,7 +265,6 @@ export default function QuickAddModal({
       return true;
     });
 
-    // unique names
     const set = new Map();
     for (const c of list) {
       if (!c?.name) continue;
@@ -177,23 +326,23 @@ export default function QuickAddModal({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 16,
-        zIndex: 9999
+        zIndex: 9999,
+        backdropFilter: 'blur(2px)'
       }}
     >
-      <Card
+      <ThemedCard
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: 'min(860px, 96vw)',
-          padding: 16,
-          border: '1px solid rgba(10,53,92,0.10)'
+          padding: '24px 28px',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', marginBottom: 20 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: THEME.brandPrimary, fontFamily: THEME.serifFont }}>
-              Add activity
+            <div style={{ fontSize: 20, fontWeight: 700, color: UI.primary, fontFamily: THEME.serifFont }}>
+              Add Activity
             </div>
-            <div style={{ marginTop: 4, fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+            <div style={{ marginTop: 4, fontSize: 12, color: UI.muted, fontWeight: 500 }}>
               Pick area/category/activity, select students, optional date — done.
             </div>
           </div>
@@ -203,9 +352,9 @@ export default function QuickAddModal({
             style={{
               border: 'none',
               background: 'transparent',
-              fontSize: 22,
+              fontSize: 24,
               cursor: 'pointer',
-              color: THEME.textMuted,
+              color: UI.muted,
               lineHeight: '20px'
             }}
             aria-label="Close"
@@ -214,166 +363,59 @@ export default function QuickAddModal({
           </button>
         </div>
 
-        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Classroom</div>
-            <select
-              value={classroomId}
-              onChange={(e) => setClassroomId(e.target.value)}
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 10px',
-                fontSize: 13,
-                fontWeight: 600,
-                background: '#fff'
-              }}
-            >
+            <FormLabel>Classroom</FormLabel>
+            <Field as="select" value={classroomId} onChange={(e) => setClassroomId(e.target.value)}>
               {classrooms.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
+                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
-            </select>
+            </Field>
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Status</div>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 10px',
-                fontSize: 13,
-                fontWeight: 600,
-                background: '#fff'
-              }}
-            >
+            <FormLabel>Status</FormLabel>
+            <Field as="select" value={status} onChange={(e) => setStatus(e.target.value)}>
               {STATUS_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </Field>
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
-              Date (optional)
-            </div>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 10px',
-                fontSize: 13,
-                fontWeight: 600,
-                background: '#fff'
-              }}
-            />
+            <FormLabel>Date (optional)</FormLabel>
+            <Field type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
         </div>
 
-        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 16, marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>Area</div>
-            <select
-              value={area}
-              onChange={(e) => {
-                setArea(e.target.value);
-                setCategory('');
-              }}
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 10px',
-                fontSize: 13,
-                fontWeight: 600,
-                background: '#fff'
-              }}
-            >
+            <FormLabel>Area</FormLabel>
+            <Field as="select" value={area} onChange={(e) => { setArea(e.target.value); setCategory(''); }}>
               <option value="">Select…</option>
-              {areaOptions.map(a => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
+              {areaOptions.map(a => <option key={a} value={a}>{a}</option>)}
+            </Field>
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
-              Category (optional)
-            </div>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 10px',
-                fontSize: 13,
-                fontWeight: 600,
-                background: '#fff'
-              }}
-            >
+            <FormLabel>Category (optional)</FormLabel>
+            <Field as="select" value={category} onChange={(e) => setCategory(e.target.value)}>
               <option value="">—</option>
-              {categoryOptions.map(c => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </Field>
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
-              Activity (pick or type)
-            </div>
-
-            <input
-              list="activity-suggestions"
-              value={activity}
-              onChange={(e) => setActivity(e.target.value)}
-              placeholder="Start typing…"
-              style={{
-                width: '100%',
-                height: 38,
-                borderRadius: 12,
-                border: '1px solid rgba(10,53,92,0.14)',
-                padding: '0 12px',
-                fontSize: 13,
-                fontWeight: 500,
-                background: '#fff'
-              }}
-            />
-            <datalist id="activity-suggestions">
-              {activityOptions.slice(0, 200).map(a => (
-                <option key={a} value={a} />
-              ))}
+            <FormLabel>Activity (pick or type)</FormLabel>
+            <Field list="quick-add-activity-suggestions" value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="Start typing…" />
+            <datalist id="quick-add-activity-suggestions">
+              {activityOptions.slice(0, 200).map(a => <option key={a} value={a} />)}
             </datalist>
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 650, color: THEME.brandPrimary, marginBottom: 6 }}>
-            Teacher note / sub-activity (optional)
-          </div>
+        <div style={{ marginBottom: 20 }}>
+          <FormLabel>Teacher note / sub-activity (optional)</FormLabel>
           <textarea
             value={teacherNote}
             onChange={(e) => setTeacherNote(e.target.value)}
@@ -381,46 +423,35 @@ export default function QuickAddModal({
             style={{
               width: '100%',
               minHeight: 70,
-              borderRadius: 14,
-              border: '1px solid rgba(10,53,92,0.14)',
-              padding: 12,
+              borderRadius: THEME.radius,
+              border: `1px solid ${UI.borderSoft}`,
+              padding: '10px 14px',
               fontSize: 13,
               fontWeight: 500,
               background: '#fff',
-              resize: 'vertical'
+              resize: 'vertical',
+              fontFamily: THEME.sansFont,
+              outline: 'none'
             }}
+            onFocus={(e) => e.target.style.borderColor = UI.primary}
+            onBlur={(e) => e.target.style.borderColor = UI.borderSoft}
           />
         </div>
 
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 14, border: '1px solid rgba(10,53,92,0.10)', background: '#fff' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: THEME.brandPrimary }}>
+        <div style={{ padding: 16, borderRadius: THEME.radius, border: `1px solid ${UI.borderSoft}`, background: '#f8fafc' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: UI.primary }}>
               Students ({selected.size} selected)
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="ghost" onClick={selectAll}>Select all</Button>
-              <Button variant="ghost" onClick={clearAll}>Clear</Button>
+              <button onClick={selectAll} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, fontWeight: 600, fontSize: 12 }}>Select all</button>
+              <button onClick={clearAll} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.muted, fontWeight: 600, fontSize: 12 }}>Clear</button>
             </div>
           </div>
 
-          <input
-            value={studentSearch}
-            onChange={(e) => setStudentSearch(e.target.value)}
-            placeholder="Search student…"
-            style={{
-              marginTop: 10,
-              width: '100%',
-              height: 36,
-              borderRadius: 12,
-              border: '1px solid rgba(10,53,92,0.14)',
-              padding: '0 12px',
-              fontSize: 13,
-              fontWeight: 500,
-              background: '#fff'
-            }}
-          />
+          <Field value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="Search student…" />
 
-          <div style={{ marginTop: 10, maxHeight: 220, overflow: 'auto', borderRadius: 12, border: '1px solid rgba(10,53,92,0.10)' }}>
+          <div style={{ marginTop: 12, maxHeight: 180, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {filteredStudents.map(s => {
               const id = String(s.id);
               const checked = selected.has(id);
@@ -433,36 +464,39 @@ export default function QuickAddModal({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
-                    padding: '10px 12px',
-                    borderBottom: '1px solid rgba(10,53,92,0.06)',
+                    padding: '8px 12px',
+                    border: `1px solid ${checked ? UI.primary : UI.borderSoft}`,
+                    background: checked ? rgba(UI.primary, 0.08) : '#fff',
+                    borderRadius: 6,
                     cursor: 'pointer',
-                    userSelect: 'none'
+                    userSelect: 'none',
+                    transition: 'all 0.15s'
                   }}
                 >
-                  <input type="checkbox" checked={checked} onChange={() => toggleStudent(id)} />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: THEME.brandPrimary }}>{name}</span>
+                  <input type="checkbox" checked={checked} onChange={() => toggleStudent(id)} style={{ accentColor: UI.primary }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: checked ? UI.primary : UI.text }}>{name}</span>
                 </label>
               );
             })}
             {filteredStudents.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+              <div style={{ padding: 12, fontSize: 12, color: UI.muted, fontWeight: 500 }}>
                 No students match your search.
               </div>
             ) : null}
           </div>
         </div>
 
-        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-          <div style={{ fontSize: 12, color: THEME.textMuted, fontWeight: 500 }}>
+        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, color: UI.muted, fontWeight: 500 }}>
             Keep it simple: pick the activity, add students, optional date.
           </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button onClick={doSubmit}>Add</Button>
+            <StyledButton variant="ghost" onClick={onClose}>Cancel</StyledButton>
+            <StyledButton onClick={doSubmit}>Add Activity</StyledButton>
           </div>
         </div>
-      </Card>
+      </ThemedCard>
     </div>
   );
 }

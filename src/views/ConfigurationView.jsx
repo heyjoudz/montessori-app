@@ -5,10 +5,10 @@ import Card from '../components/ui/Card';
 import {
   Search, Plus, Save, X,
   School, Users, GraduationCap, BookOpen, Calendar,
-  ChevronRight, ChevronDown, Loader, Check, Info, Mail, Trash2, ClipboardList
+  ChevronRight, ChevronDown, Loader, Check, Info, Mail, Trash2
 } from 'lucide-react';
 
-// ---------- small color helpers ----------
+// ---------- small color helpers (no deps) ----------
 const hexToRgb = (hex) => {
   const h = (hex || '').replace('#', '').trim();
   if (h.length === 3) {
@@ -228,7 +228,7 @@ const TreeRow = ({
   </div>
 );
 
-// ---------- Success Toast ----------
+// ---------- Success Toast Component ----------
 const SuccessToast = ({ show }) => (
   <div
     style={{
@@ -279,22 +279,14 @@ export default function ConfigurationView({ isReadOnly }) {
   const [currCats, setCurrCats] = useState([]);
   const [userClassrooms, setUserClassrooms] = useState([]);
 
-  // ✅ Assessments
-  const [assessTemplates, setAssessTemplates] = useState([]);
-  const [assessSkills, setAssessSkills] = useState([]);
-
   // UI
   const [searchTerm, setSearchTerm] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [expandedNodes, setExpandedNodes] = useState({ YEAR_2025: true });
 
-  // Skills sub-state
-  const [newSkillName, setNewSkillName] = useState('');
-  const [newSkillArea, setNewSkillArea] = useState('');
-  const [editingSkillId, setEditingSkillId] = useState(null);
-
   useEffect(() => { fetchEverything(); }, []);
 
+  // Auto-hide toast
   useEffect(() => {
     if (showToast) {
       const timer = setTimeout(() => setShowToast(false), 3000);
@@ -305,7 +297,7 @@ export default function ConfigurationView({ isReadOnly }) {
   const fetchEverything = async () => {
     setLoading(true);
     try {
-      const [s, c, p, st, cur, ca, cc, tp, uc, at, ask] = await Promise.all([
+      const [s, c, p, st, cur, ca, cc, tp, uc] = await Promise.all([
         supabase.from('schools').select('*').order('name'),
         supabase.from('classrooms').select('*').order('name'),
         supabase.from('profiles').select('*').order('last_name'),
@@ -314,9 +306,7 @@ export default function ConfigurationView({ isReadOnly }) {
         supabase.from('curriculum_areas').select('*').order('name'),
         supabase.from('curriculum_categories').select('*').order('name'),
         supabase.from('term_plans').select('*').order('week_number'),
-        supabase.from('user_classrooms').select('*'),
-        supabase.from('assessment_templates').select('*').order('created_at'),
-        supabase.from('assessment_skills').select('*').order('sort_order'),
+        supabase.from('user_classrooms').select('*')
       ]);
 
       setSchools(s.data || []);
@@ -328,11 +318,6 @@ export default function ConfigurationView({ isReadOnly }) {
       setCurrCats(cc.data || []);
       setTermPlans(tp.data || []);
       setUserClassrooms(uc.data || []);
-
-      setAssessTemplates(at.data || []);
-      setAssessSkills(ask.data || []);
-
-      if (ca.data?.[0]) setNewSkillArea(ca.data[0].id);
     } catch (error) {
       console.error(error);
     } finally {
@@ -349,15 +334,13 @@ export default function ConfigurationView({ isReadOnly }) {
       staff: { first_name: '', last_name: '', email: '', role: 'teacher' },
       students: { first_name: '', last_name: '', classroom_id: classrooms[0]?.id },
       curriculum: { name: '', category_id: currCats[0]?.id, is_official: true, is_active: true },
-      calendar: { week_number: (termPlans?.length || 0) + 1, term_name: 'Term 1', date_range: '', theme: '' },
-
-      // ✅ NEW
-      assessments: { title: 'New Assessment Template', default_date: '', classroom_ids: [] }
+      calendar: { week_number: (termPlans?.length || 0) + 1, term_name: 'Term 1', date_range: '', theme: '' }
     };
 
     setEditingItem({ ...templates[activeTab], id: 'NEW' });
   };
 
+  // Maps active tab to table name
   const getTableName = () => {
     const tableMap = {
       schools: 'schools',
@@ -365,14 +348,14 @@ export default function ConfigurationView({ isReadOnly }) {
       staff: 'profiles',
       students: 'students',
       curriculum: 'curriculum_activities',
-      calendar: 'term_plans',
-      assessments: 'assessment_templates'
+      calendar: 'term_plans'
     };
     return tableMap[activeTab];
   };
 
   const handleDelete = async () => {
     if (!editingItem || editingItem.id === 'NEW') return;
+
     if (!window.confirm('Are you sure you want to delete this item? This cannot be undone.')) return;
 
     setIsSaving(true);
@@ -383,13 +366,13 @@ export default function ConfigurationView({ isReadOnly }) {
       if (error) throw error;
 
       const removeId = (prev) => prev.filter(i => i.id !== editingItem.id);
+
       if (activeTab === 'schools') setSchools(removeId);
       if (activeTab === 'classrooms') setClassrooms(removeId);
       if (activeTab === 'staff') setProfiles(removeId);
       if (activeTab === 'students') setStudents(removeId);
       if (activeTab === 'curriculum') setCurriculum(removeId);
       if (activeTab === 'calendar') setTermPlans(removeId);
-      if (activeTab === 'assessments') setAssessTemplates(removeId);
 
       setEditingItem(null);
     } catch (err) {
@@ -420,7 +403,6 @@ export default function ConfigurationView({ isReadOnly }) {
         if (activeTab === 'students') setStudents(prev => [...prev, result]);
         if (activeTab === 'curriculum') setCurriculum(prev => [...prev, result]);
         if (activeTab === 'calendar') setTermPlans(prev => [...prev, result]);
-        if (activeTab === 'assessments') setAssessTemplates(prev => [...prev, result]);
       } else {
         const { data, error } = await supabase.from(table).update(payload).eq('id', id).select();
         if (error) throw error;
@@ -433,7 +415,6 @@ export default function ConfigurationView({ isReadOnly }) {
         if (activeTab === 'students') setStudents(u);
         if (activeTab === 'curriculum') setCurriculum(u);
         if (activeTab === 'calendar') setTermPlans(u);
-        if (activeTab === 'assessments') setAssessTemplates(u);
       }
 
       setEditingItem(prev => ({ ...result, themes: prev?.themes }));
@@ -446,80 +427,17 @@ export default function ConfigurationView({ isReadOnly }) {
   };
 
   const toggleTeacherClass = async (uid, cid) => {
-    const exists = userClassrooms.find(uc => String(uc.user_id) === String(uid) && String(uc.classroom_id) === String(cid));
+    const exists = userClassrooms.find(uc => uc.user_id === uid && uc.classroom_id === cid);
     if (exists) {
       await supabase.from('user_classrooms').delete().match({ user_id: uid, classroom_id: cid });
-      setUserClassrooms(prev => prev.filter(uc => !(String(uc.user_id) === String(uid) && String(uc.classroom_id) === String(cid))));
+      setUserClassrooms(prev => prev.filter(uc => !(uc.user_id === uid && uc.classroom_id === cid)));
     } else {
       const { data } = await supabase.from('user_classrooms').insert({ user_id: uid, classroom_id: cid }).select();
       if (data?.[0]) setUserClassrooms(prev => [...prev, data[0]]);
     }
   };
 
-  // ✅ Assessments: toggle linked classrooms (local state)
-  const toggleAssessmentClassroom = (cid) => {
-    const current = editingItem?.classroom_ids || [];
-    const has = current.some(x => String(x) === String(cid));
-    const next = has ? current.filter(x => String(x) !== String(cid)) : [...current, cid];
-    setEditingItem({ ...editingItem, classroom_ids: next });
-  };
-
-  // ✅ Add/Delete/Rename Skills using domain_id
-  const handleAddSkill = async () => {
-    if (!editingItem || editingItem.id === 'NEW' || !newSkillName.trim()) return;
-
-    const currentSkills = assessSkills.filter(s => String(s.domain_id) === String(editingItem.id));
-    const nextOrder = currentSkills.length + 1;
-
-    try {
-      const { data, error } = await supabase
-        .from('assessment_skills')
-        .insert({
-          domain_id: editingItem.id,
-          name: newSkillName.trim(),
-          area_id: newSkillArea || null,
-          sort_order: nextOrder
-        })
-        .select();
-
-      if (error) throw error;
-      if (data?.[0]) setAssessSkills(prev => [...prev, data[0]]);
-      setNewSkillName('');
-    } catch (e) {
-      alert(e.message);
-    }
-  };
-
-  const handleDeleteSkill = async (skillId) => {
-    try {
-      await supabase.from('assessment_skills').delete().eq('id', skillId);
-      setAssessSkills(prev => prev.filter(s => s.id !== skillId));
-    } catch (e) {
-      alert(e.message);
-    }
-  };
-
-  const handleUpdateSkillName = async (skillId, newName) => {
-    const name = String(newName || '').trim();
-    if (!name) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('assessment_skills')
-        .update({ name })
-        .eq('id', skillId)
-        .select();
-      if (error) throw error;
-
-      if (data?.[0]) setAssessSkills(prev => prev.map(s => s.id === skillId ? data[0] : s));
-      setEditingSkillId(null);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // ---------- RENDERERS ----------
-
+  // ---------- Trees / Lists ----------
   const renderCalendarTree = () => (
     <TreeRow
       label="Year 2025–2026"
@@ -673,94 +591,56 @@ export default function ConfigurationView({ isReadOnly }) {
     });
   };
 
-  // ✅ NO-REGRESSION: fix list rendering per tab (students show classroom under name)
-  const renderMiddleList = () => {
-    const q = (searchTerm || '').toLowerCase().trim();
+  const renderGenericList = (data, titleKey, subKey) => {
+    const q = (searchTerm || '').toLowerCase();
+    return data
+      .filter(i => ((i[titleKey] || '') + '').toLowerCase().includes(q))
+      .map(item => {
+        const isActive = editingItem?.id === item.id;
 
-    const row = (item, title, sub) => {
-      const isActive = editingItem?.id === item.id;
-      return (
-        <div
-          key={item.id}
-          onClick={() => setEditingItem(item)}
-          style={{
-            padding: '14px 18px',
-            borderBottom: `1px solid ${rgba(UI.accent, 0.22)}`,
-            cursor: 'pointer',
-            backgroundColor: isActive ? UI.soft : '#fff',
-            borderLeft: isActive ? `4px solid ${UI.secondary}` : '4px solid transparent'
-          }}
-        >
-          <div style={{ fontWeight: 600, color: UI.text }}>{title}</div>
-          {sub ? (
-            <div style={{ fontSize: 12, color: UI.muted, marginTop: 4, fontWeight: 650 }}>
-              {sub}
-            </div>
-          ) : null}
-        </div>
-      );
-    };
+        let title = item[titleKey];
+        let sub =
+          subKey === 'role'
+            ? item.role
+            : subKey === 'classroom_id'
+              ? classrooms.find(c => String(c.id) === String(item.classroom_id))?.name
+              : subKey === 'school_id'
+                ? schools.find(s => String(s.id) === String(item.school_id))?.name
+                : subKey
+                  ? item[subKey]
+                  : '';
 
-    if (activeTab === 'students') {
-      return students
-        .filter(s => (`${s.first_name || ''} ${s.last_name || ''}`.toLowerCase()).includes(q))
-        .map(s => {
-          const c = classrooms.find(x => String(x.id) === String(s.classroom_id));
-          return row(s, `${s.first_name || ''} ${s.last_name || ''}`.trim(), c?.name || '');
-        });
-    }
+        if (activeTab === 'staff' || activeTab === 'students') {
+          title = `${item.first_name || ''} ${item.last_name || ''}`.trim();
+        }
 
-    if (activeTab === 'staff') {
-      return profiles
-        .filter(p => (`${p.first_name || ''} ${p.last_name || ''}`.toLowerCase()).includes(q))
-        .map(p => row(p, `${p.first_name || ''} ${p.last_name || ''}`.trim(), (p.role || '').replace('_', ' ')));
-    }
-
-    if (activeTab === 'classrooms') {
-      return classrooms
-        .filter(c => (c.name || '').toLowerCase().includes(q))
-        .map(c => {
-          const s = schools.find(x => String(x.id) === String(c.school_id));
-          return row(c, c.name || '', s?.name || '');
-        });
-    }
-
-    if (activeTab === 'schools') {
-      return schools
-        .filter(s => (s.name || '').toLowerCase().includes(q))
-        .map(s => row(s, s.name || '', s.address || ''));
-    }
-
-    if (activeTab === 'assessments') {
-      return assessTemplates
-        .filter(t => (t.title || '').toLowerCase().includes(q))
-        .map(t => {
-          const ids = t.classroom_ids || [];
-          const linkedNames = (ids || [])
-            .map(id => classrooms.find(c => String(c.id) === String(id))?.name)
-            .filter(Boolean);
-
-          let linkedLabel = '';
-          if (linkedNames.length === 1) linkedLabel = `Linked: ${linkedNames[0]}`;
-          else if (linkedNames.length === 2) linkedLabel = `Linked: ${linkedNames[0]}, ${linkedNames[1]}`;
-          else if (linkedNames.length > 2) linkedLabel = `Linked: ${linkedNames[0]}, ${linkedNames[1]} +${linkedNames.length - 2}`;
-
-          const dateLabel = t.default_date ? `Target date: ${String(t.default_date).slice(0, 10)}` : '';
-          const sub = [dateLabel, linkedLabel].filter(Boolean).join(' • ');
-
-          return row(t, t.title || 'Untitled', sub);
-        });
-    }
-
-    // fallback (shouldn’t happen)
-    return null;
+        return (
+          <div
+            key={item.id}
+            onClick={() => setEditingItem(item)}
+            style={{
+              padding: '14px 18px',
+              borderBottom: `1px solid ${rgba(UI.accent, 0.22)}`,
+              cursor: 'pointer',
+              backgroundColor: isActive ? UI.soft : '#fff',
+              borderLeft: isActive ? `4px solid ${UI.secondary}` : '4px solid transparent'
+            }}
+          >
+            <div style={{ fontWeight: 600, color: UI.text }}>{title}</div>
+            {sub ? (
+              <div style={{ fontSize: 12, color: UI.muted, marginTop: 4, fontWeight: 650 }}>
+                {String(sub).replace('_', ' ')}
+              </div>
+            ) : null}
+          </div>
+        );
+      });
   };
 
   const listTitle =
     activeTab === 'calendar' ? 'Weeks'
       : activeTab === 'curriculum' ? 'Curriculum'
-        : activeTab === 'assessments' ? 'Report Cards'
-          : activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+        : activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
 
   const showSearch = activeTab !== 'calendar';
 
@@ -775,6 +655,7 @@ export default function ConfigurationView({ isReadOnly }) {
       }}
     >
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
       <SuccessToast show={showToast} />
 
       {/* LEFT NAV */}
@@ -786,31 +667,79 @@ export default function ConfigurationView({ isReadOnly }) {
           <div style={{ marginTop: 10, height: 1, background: rgba(UI.accent, 0.35) }} />
         </div>
 
-        <div style={{ padding: '0 22px', marginTop: 14 }}><FormLabel>Planning</FormLabel></div>
-        <TabButton active={activeTab === 'calendar'} label="School Calendar" icon={Calendar} onClick={() => { setActiveTab('calendar'); setEditingItem(null); setSearchTerm(''); }} />
-        <TabButton active={activeTab === 'curriculum'} label="Curriculum" icon={BookOpen} onClick={() => { setActiveTab('curriculum'); setEditingItem(null); setSearchTerm(''); }} />
+        <div style={{ padding: '0 22px', marginTop: 14 }}>
+          <FormLabel>Planning</FormLabel>
+        </div>
 
-        {/* ✅ NEW */}
-        <TabButton active={activeTab === 'assessments'} label="Assessments" icon={ClipboardList} onClick={() => { setActiveTab('assessments'); setEditingItem(null); setSearchTerm(''); }} />
+        <TabButton
+          active={activeTab === 'calendar'}
+          label="School Calendar"
+          icon={Calendar}
+          onClick={() => { setActiveTab('calendar'); setEditingItem(null); setSearchTerm(''); }}
+        />
+        <TabButton
+          active={activeTab === 'curriculum'}
+          label="Curriculum"
+          icon={BookOpen}
+          onClick={() => { setActiveTab('curriculum'); setEditingItem(null); setSearchTerm(''); }}
+        />
 
         <div style={{ height: 18 }} />
-        <div style={{ padding: '0 22px' }}><FormLabel>People & School</FormLabel></div>
-        <TabButton active={activeTab === 'students'} label="Students" icon={GraduationCap} onClick={() => { setActiveTab('students'); setEditingItem(null); setSearchTerm(''); }} />
-        <TabButton active={activeTab === 'staff'} label="Staff" icon={Users} onClick={() => { setActiveTab('staff'); setEditingItem(null); setSearchTerm(''); }} />
-        <TabButton active={activeTab === 'classrooms'} label="Classrooms" icon={BookOpen} onClick={() => { setActiveTab('classrooms'); setEditingItem(null); setSearchTerm(''); }} />
-        <TabButton active={activeTab === 'schools'} label="Schools" icon={School} onClick={() => { setActiveTab('schools'); setEditingItem(null); setSearchTerm(''); }} />
+
+        <div style={{ padding: '0 22px' }}>
+          <FormLabel>People & School</FormLabel>
+        </div>
+
+        <TabButton
+          active={activeTab === 'students'}
+          label="Students"
+          icon={GraduationCap}
+          onClick={() => { setActiveTab('students'); setEditingItem(null); setSearchTerm(''); }}
+        />
+        <TabButton
+          active={activeTab === 'staff'}
+          label="Staff"
+          icon={Users}
+          onClick={() => { setActiveTab('staff'); setEditingItem(null); setSearchTerm(''); }}
+        />
+        <TabButton
+          active={activeTab === 'classrooms'}
+          label="Classrooms"
+          icon={BookOpen}
+          onClick={() => { setActiveTab('classrooms'); setEditingItem(null); setSearchTerm(''); }}
+        />
+        <TabButton
+          active={activeTab === 'schools'}
+          label="Schools"
+          icon={School}
+          onClick={() => { setActiveTab('schools'); setEditingItem(null); setSearchTerm(''); }}
+        />
       </Card>
 
-      {/* MIDDLE LIST */}
+      {/* MIDDLE LIST/TREE */}
       <Card style={{ width: 380, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ backgroundColor: UI.soft, padding: '10px 14px', borderBottom: `1px solid ${rgba(UI.accent, 0.35)}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div
+          style={{
+            backgroundColor: UI.soft,
+            padding: '10px 14px',
+            borderBottom: `1px solid ${rgba(UI.accent, 0.35)}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10
+          }}
+        >
           <Info size={15} color={UI.primary} />
-          <div style={{ fontSize: 12, color: UI.text, fontWeight: 750 }}>Select a row to edit.</div>
+          <div style={{ fontSize: 12, color: UI.text, fontWeight: 750 }}>
+            Select a row to edit.
+          </div>
         </div>
 
         <div style={{ padding: 16, borderBottom: `1px solid ${rgba(UI.accent, 0.25)}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <div style={{ fontSize: 16, fontWeight: 900, color: UI.text, fontFamily: THEME.serifFont }}>{listTitle}</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: UI.text, fontFamily: THEME.serifFont }}>
+              {listTitle}
+            </div>
+
             <button
               onClick={handleCreate}
               title="Add New"
@@ -855,10 +784,34 @@ export default function ConfigurationView({ isReadOnly }) {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', backgroundColor: '#fff' }}>
-          {loading && <div style={{ padding: 18, color: UI.muted, fontWeight: 700 }}>Loading…</div>}
+          {loading && (
+            <div style={{ padding: 18, color: UI.muted, fontWeight: 700 }}>
+              Loading…
+            </div>
+          )}
+
           {!loading && activeTab === 'calendar' && renderCalendarTree()}
           {!loading && activeTab === 'curriculum' && renderCurriculumTree()}
-          {!loading && (activeTab !== 'calendar' && activeTab !== 'curriculum') && renderMiddleList()}
+
+          {!loading && (activeTab !== 'calendar' && activeTab !== 'curriculum') && (
+            renderGenericList(
+              activeTab === 'students'
+                ? students
+                : activeTab === 'staff'
+                  ? profiles
+                  : activeTab === 'classrooms'
+                    ? classrooms
+                    : schools,
+              activeTab === 'schools' || activeTab === 'classrooms' ? 'name' : 'first_name',
+              activeTab === 'students'
+                ? 'classroom_id'
+                : activeTab === 'staff'
+                  ? 'role'
+                  : activeTab === 'classrooms'
+                    ? 'school_id'
+                    : 'address'
+            )
+          )}
         </div>
       </Card>
 
@@ -866,19 +819,31 @@ export default function ConfigurationView({ isReadOnly }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         {editingItem ? (
           <Card style={{ height: '100%', padding: 34, overflowY: 'auto', position: 'relative' }}>
-            <button onClick={() => setEditingItem(null)} style={{ position: 'absolute', right: 18, top: 18, border: 'none', background: 'none', cursor: 'pointer' }} title="Close">
+            <button
+              onClick={() => setEditingItem(null)}
+              style={{ position: 'absolute', right: 18, top: 18, border: 'none', background: 'none', cursor: 'pointer' }}
+              title="Close"
+            >
               <X color={rgba(UI.text, 0.4)} />
             </button>
 
             <div style={{ marginBottom: 22 }}>
-              <TinyPill tone="secondary">{editingItem.id === 'NEW' ? 'Creating' : 'Editing'}</TinyPill>
+              <TinyPill tone="secondary">
+                {editingItem.id === 'NEW' ? 'Creating' : 'Editing'}
+              </TinyPill>
 
-              <h2 style={{ margin: '12px 0 0 0', fontFamily: THEME.serifFont, fontSize: 32, color: UI.text, letterSpacing: '-0.02em' }}>
+              <h2
+                style={{
+                  margin: '12px 0 0 0',
+                  fontFamily: THEME.serifFont,
+                  fontSize: 32,
+                  color: UI.text,
+                  letterSpacing: '-0.02em'
+                }}
+              >
                 {activeTab === 'calendar'
                   ? `Week ${editingItem.week_number ?? ''}`
-                  : (activeTab === 'assessments'
-                    ? (editingItem.title || 'New Template')
-                    : (editingItem.name || editingItem.first_name || 'New Item'))}
+                  : (editingItem.name || editingItem.first_name || 'New Item')}
               </h2>
 
               <div style={{ marginTop: 10, height: 1, background: rgba(UI.accent, 0.35) }} />
@@ -934,8 +899,8 @@ export default function ConfigurationView({ isReadOnly }) {
 
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
                         {classrooms.map(c => {
-                          const isAssigned = userClassrooms.some(uc =>
-                            String(uc.user_id) === String(editingItem.id) && String(uc.classroom_id) === String(c.id)
+                          const isAssigned = userClassrooms.some(
+                            uc => String(uc.user_id) === String(editingItem.id) && String(uc.classroom_id) === String(c.id)
                           );
 
                           return (
@@ -1021,19 +986,11 @@ export default function ConfigurationView({ isReadOnly }) {
                   <div style={{ display: 'flex', gap: 16 }}>
                     <div style={{ width: 120 }}>
                       <FormLabel>Week #</FormLabel>
-                      <StyledInput
-                        type="number"
-                        value={editingItem.week_number ?? ''}
-                        onChange={e => setEditingItem({ ...editingItem, week_number: e.target.value })}
-                      />
+                      <StyledInput type="number" value={editingItem.week_number ?? ''} onChange={e => setEditingItem({ ...editingItem, week_number: e.target.value })} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <FormLabel>Date Range</FormLabel>
-                      <StyledInput
-                        value={editingItem.date_range || ''}
-                        placeholder="e.g. Sep 8 – 12"
-                        onChange={e => setEditingItem({ ...editingItem, date_range: e.target.value })}
-                      />
+                      <StyledInput value={editingItem.date_range || ''} placeholder="e.g. Sep 8 – 12" onChange={e => setEditingItem({ ...editingItem, date_range: e.target.value })} />
                     </div>
                   </div>
 
@@ -1048,181 +1005,18 @@ export default function ConfigurationView({ isReadOnly }) {
                   </StyledSelect>
                 </>
               )}
-
-              {/* ✅ Assessments Editor */}
-              {activeTab === 'assessments' && (
-                <>
-                  <FormLabel>Template Title</FormLabel>
-                  <StyledInput
-                    value={editingItem.title || ''}
-                    placeholder="e.g. Winter Term Evaluation"
-                    onChange={e => setEditingItem({ ...editingItem, title: e.target.value })}
-                  />
-
-                  <FormLabel>Target Date (Term End)</FormLabel>
-                  <StyledInput
-                    type="date"
-                    value={editingItem.default_date || ''}
-                    onChange={e => setEditingItem({ ...editingItem, default_date: e.target.value })}
-                  />
-
-                  <div style={{ marginBottom: 20 }}>
-                    <FormLabel>Linked Classrooms</FormLabel>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                      {classrooms.map(c => {
-                        const isLinked = (editingItem.classroom_ids || []).some(x => String(x) === String(c.id));
-                        return (
-                          <div
-                            key={c.id}
-                            onClick={() => toggleAssessmentClassroom(c.id)}
-                            style={{
-                              padding: '8px 12px',
-                              borderRadius: 999,
-                              fontSize: 13,
-                              cursor: 'pointer',
-                              fontWeight: 600,
-                              backgroundColor: isLinked ? UI.secondary : '#fff',
-                              color: isLinked ? UI.text : UI.muted,
-                              border: `1px solid ${isLinked ? UI.secondary : rgba(UI.accent, 0.35)}`,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6
-                            }}
-                          >
-                            {c.name}
-                            {isLinked && <Check size={14} />}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {editingItem.id === 'NEW' ? (
-                    <div style={{ marginTop: 10, padding: 16, backgroundColor: UI.soft, borderRadius: 12, fontSize: 13, color: UI.muted }}>
-                      <Info size={16} style={{ marginBottom: 6 }} />
-                      Save this template first to add skills and criteria.
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 26 }}>
-                      <FormLabel>Criteria / Skills</FormLabel>
-
-                      {/* Add Skill */}
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 12, padding: 12, border: `1px solid ${UI.line}`, borderRadius: 12, background: '#fafafa' }}>
-                        <div style={{ flex: 1 }}>
-                          <FormLabel>Skill Name</FormLabel>
-                          <input
-                            value={newSkillName}
-                            onChange={e => setNewSkillName(e.target.value)}
-                            style={{ width: '100%', padding: '10px 10px', borderRadius: 10, border: '1px solid #ddd', outline: 'none' }}
-                            placeholder="e.g. Counts to 10"
-                          />
-                        </div>
-
-                        <div style={{ width: 170 }}>
-                          <FormLabel>Area</FormLabel>
-                          <select
-                            value={newSkillArea || ''}
-                            onChange={e => setNewSkillArea(e.target.value)}
-                            style={{ width: '100%', padding: '10px 10px', borderRadius: 10, border: '1px solid #ddd', outline: 'none', background: '#fff' }}
-                          >
-                            {currAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                          </select>
-                        </div>
-
-                        <button
-                          onClick={handleAddSkill}
-                          style={{ padding: '10px 14px', borderRadius: 12, background: UI.secondary, color: UI.text, fontWeight: 800, border: 'none', cursor: 'pointer', height: 42 }}
-                        >
-                          Add
-                        </button>
-                      </div>
-
-                      {/* Skills List */}
-                      <div style={{ borderRadius: 12, border: `1px solid ${UI.line}`, overflow: 'hidden', background: '#fff' }}>
-                        {currAreas.map(area => {
-                          const areaSkills = assessSkills.filter(s =>
-                            String(s.domain_id) === String(editingItem.id) &&
-                            String(s.area_id) === String(area.id)
-                          );
-                          if (!areaSkills.length) return null;
-
-                          const subjStyle = getSubjectStyle(area.name);
-
-                          return (
-                            <div key={area.id}>
-                              <div style={{ padding: '10px 14px', background: subjStyle.bg, borderBottom: `1px solid ${UI.line}`, fontWeight: 900, color: subjStyle.text, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <div style={{ width: 8, height: 8, borderRadius: '50%', background: subjStyle.accent }} />
-                                {area.name}
-                              </div>
-
-                              {areaSkills.map(skill => (
-                                <div key={skill.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #f0f0f0', fontSize: 13 }}>
-                                  {editingSkillId === skill.id ? (
-                                    <input
-                                      defaultValue={skill.name}
-                                      autoFocus
-                                      onBlur={(e) => handleUpdateSkillName(skill.id, e.target.value)}
-                                      onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateSkillName(skill.id, e.currentTarget.value); }}
-                                      style={{ flex: 1, padding: '8px 8px', border: '1px solid #ddd', borderRadius: 10 }}
-                                    />
-                                  ) : (
-                                    <div
-                                      style={{ flex: 1, fontWeight: 600, cursor: 'text' }}
-                                      onClick={() => setEditingSkillId(skill.id)}
-                                      title="Click to rename"
-                                    >
-                                      {skill.name}
-                                    </div>
-                                  )}
-
-                                  <button
-                                    onClick={() => handleDeleteSkill(skill.id)}
-                                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#d32f2f', marginLeft: 10 }}
-                                    title="Delete"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })}
-
-                        {/* Uncategorized */}
-                        {assessSkills.filter(s => String(s.domain_id) === String(editingItem.id) && !s.area_id).length > 0 && (
-                          <div>
-                            <div style={{ padding: '10px 14px', background: '#f5f5f5', borderBottom: `1px solid ${UI.line}`, fontWeight: 900, color: UI.muted, fontSize: 13 }}>
-                              Uncategorized
-                            </div>
-
-                            {assessSkills
-                              .filter(s => String(s.domain_id) === String(editingItem.id) && !s.area_id)
-                              .map(skill => (
-                                <div key={skill.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #f0f0f0', fontSize: 13 }}>
-                                  <div style={{ flex: 1, fontWeight: 600 }}>{skill.name}</div>
-                                  <button onClick={() => handleDeleteSkill(skill.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#d32f2f' }}>
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              ))
-                            }
-                          </div>
-                        )}
-
-                        {assessSkills.filter(s => String(s.domain_id) === String(editingItem.id)).length === 0 && (
-                          <div style={{ padding: 20, textAlign: 'center', color: UI.muted, fontWeight: 650 }}>
-                            No criteria added yet.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
             </div>
 
-            {/* Footer */}
-            <div style={{ marginTop: 26, paddingTop: 18, borderTop: `1px solid ${rgba(UI.accent, 0.25)}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div
+              style={{
+                marginTop: 26,
+                paddingTop: 18,
+                borderTop: `1px solid ${rgba(UI.accent, 0.25)}`,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}
+            >
               <div>
                 {editingItem.id !== 'NEW' && (
                   <button
@@ -1235,7 +1029,7 @@ export default function ConfigurationView({ isReadOnly }) {
                       border: `1px solid ${rgba('#d93025', 0.3)}`,
                       padding: '10px 14px',
                       borderRadius: 12,
-                      fontWeight: 800,
+                      fontWeight: 700,
                       fontSize: 13,
                       cursor: isSaving ? 'not-allowed' : 'pointer',
                       display: 'flex',
@@ -1244,7 +1038,8 @@ export default function ConfigurationView({ isReadOnly }) {
                       transition: 'all 0.15s'
                     }}
                   >
-                    <Trash2 size={16} /> Delete
+                    <Trash2 size={16} />
+                    Delete
                   </button>
                 )}
               </div>
@@ -1276,11 +1071,28 @@ export default function ConfigurationView({ isReadOnly }) {
         ) : (
           <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ textAlign: 'center', padding: 22 }}>
-              <div style={{ width: 64, height: 64, borderRadius: 999, backgroundColor: rgba(UI.secondary, 0.18), border: `1px solid ${rgba(UI.secondary, 0.35)}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+              <div
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 999,
+                  backgroundColor: rgba(UI.secondary, 0.18),
+                  border: `1px solid ${rgba(UI.secondary, 0.35)}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 14px'
+                }}
+              >
                 <span style={{ fontSize: 22, fontWeight: 900, color: UI.primary }}>✎</span>
               </div>
-              <div style={{ fontFamily: THEME.serifFont, fontSize: 22, fontWeight: 900, color: UI.text }}>Configuration</div>
-              <div style={{ marginTop: 8, fontSize: 13, color: UI.muted, fontWeight: 650 }}>Click on the + button to add a new item.</div>
+
+              <div style={{ fontFamily: THEME.serifFont, fontSize: 22, fontWeight: 900, color: UI.text }}>
+                Configuration
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13, color: UI.muted, fontWeight: 650 }}>
+                Click on the + button to add a new item.
+              </div>
             </div>
           </Card>
         )}
