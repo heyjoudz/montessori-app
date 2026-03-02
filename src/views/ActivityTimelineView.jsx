@@ -76,6 +76,26 @@ const toLocalISODate = (d) => {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 };
 
+const clampToToday = (d) => {
+  const dt = new Date(d);
+  const today = new Date();
+  // strip time for safe compare
+  const dd = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const tt = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return dd > tt ? tt : dd;
+};
+
+const getWeekRangeMonSun = (anchorDate) => {
+  const d = new Date(anchorDate);
+  const day = d.getDay(); // 0 Sun ... 6 Sat
+  const diffToMon = (day === 0 ? -6 : 1) - day;
+  const start = new Date(d);
+  start.setDate(d.getDate() + diffToMon);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+};
+
 const getRawFirstTitle = (it) => 
   clean(it?.raw_activity) || 
   clean(it?.activity) || 
@@ -118,18 +138,58 @@ const inferBucket = (text) => {
 };
 
 const extractLessonName = (rec) => {
-    const html = rec.html_content || '';
-    if (html) {
-        try {
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-            const lessons = Array.from(doc.querySelectorAll('a.lesson-link')).map(a => a.textContent.trim());
-            if (lessons.length > 0) return lessons.join(' • ');
-        } catch(e) {}
+  const html = rec.html_content || '';
+  const text = rec.text_content || rec.note || '';
+
+  const normalize = (s) =>
+    String(s || '')
+      .replace(/\s+/g, ' ')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+
+  const unique = (arr) => [...new Set((arr || []).map(normalize).filter(Boolean))];
+
+  // 1) Prefer HTML extraction (most reliable)
+  if (html) {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+
+      // TC can use different anchor classes/structures, so we grab broadly
+      const anchors = Array.from(doc.querySelectorAll('a'));
+
+      const lessonTexts = anchors
+        .filter((a) => {
+          const href = (a.getAttribute('href') || '').toLowerCase();
+          const cls = (a.getAttribute('class') || '').toLowerCase();
+          // keep lesson links (class-based OR url-based)
+          return cls.includes('lesson') || href.includes('lesson');
+        })
+        .map((a) => a.textContent)
+        .map(normalize)
+        .filter(Boolean);
+
+      const lessons = unique(lessonTexts);
+      if (lessons.length > 0) return lessons.join(' • ');
+    } catch (e) {
+      // ignore and fallback
     }
-    if (rec.activity_name) return rec.activity_name;
-    const textToSearch = rec.note || rec.text_content || html.replace(/<[^>]+>/g, '');
-    const textMatch = textToSearch.match(/(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i);
-    return textMatch ? textMatch[1].trim() : 'General Activity';
+  }
+
+  // 2) Fallback: if activity_name already has multiple lessons joined
+  if (rec.activity_name) return rec.activity_name;
+
+  // 3) Fallback: parse text_content for common separators
+  const t = normalize(text);
+  if (t.includes('•')) {
+    const parts = unique(t.split('•'));
+    if (parts.length > 0) return parts.join(' • ');
+  }
+
+  // 4) Last resort: regex
+  const m = t.match(
+    /(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i
+  );
+  return m ? normalize(m[1]) : 'General Activity';
 };
 
 const cleanNoteCoordinator = (note, studentsList, activityName) => {
@@ -384,8 +444,8 @@ export default function ActivityTimelineView() {
   const [isTranslating, setIsTranslating] = useState(false);
 
   // Timeframe and Date filtering
-  const [timeFrame, setTimeFrame] = useState('14_DAYS'); // 'MONTH', '14_DAYS', 'DAY'
-  const [activeDate, setActiveDate] = useState(new Date());
+const [timeFrame, setTimeFrame] = useState('DAY'); // default: Today
+const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
 
   // Data
   const [fullMatrixData, setFullMatrixData] = useState([]); 
@@ -502,18 +562,19 @@ export default function ActivityTimelineView() {
             const procMatrix = [];
             matrixRes.data.forEach(tc => {
                 const raw = rawMatrixMap.get(String(tc.tc_observation_id || tc.id)) || {};
-                const actName = extractLessonName({ html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name });
-                
-                const names = actName ? actName.split('•').map(s => s.trim()).filter(Boolean) : [tc.activity_name || 'Activity'];
-                names.forEach(name => {
-                    procMatrix.push({
-                        ...tc,
-                        activity_name: name,
-                        bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
-                        raw_html: raw.html_content,
-                        raw_text: raw.text_content
-                    });
-                });
+                const actName = extractLessonName({
+  html_content: raw.html_content,
+  text_content: raw.text_content,
+  activity_name: tc.activity_name
+});
+
+procMatrix.push({
+  ...tc,
+  activity_name: actName || tc.activity_name || 'Activity',
+  bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
+  raw_html: raw.html_content,
+  raw_text: raw.text_content
+});
             });
             setFullMatrixData(procMatrix);
         }
@@ -554,30 +615,37 @@ export default function ActivityTimelineView() {
    * String-Based Date Filtering Logic
    * =========================
    */
-  const dateFilteredData = useMemo(() => {
-      let startD = new Date(activeDate);
-      let endD = new Date(activeDate);
-      
-      if (timeFrame === 'DAY') {
-          // Both are same day
-      } else if (timeFrame === '14_DAYS') {
-          startD.setDate(startD.getDate() - 13);
-      } else { // MONTH
-          startD.setDate(1);
-          endD.setMonth(endD.getMonth() + 1);
-          endD.setDate(0); // Last day
-      }
+ const dateFilteredData = useMemo(() => {
+  const today = new Date();
+  const endCap = clampToToday(activeDate); // never beyond today
 
-      const startStr = toLocalISODate(startD);
-      const endStr = toLocalISODate(endD);
+  let startD = new Date(endCap);
+  let endD = new Date(endCap);
 
-      return fullMatrixData.filter(r => {
-          if (!r.observation_date) return false;
-          // observation_date comes in as YYYY-MM-DD from supabase view
-          const obsStr = String(r.observation_date).slice(0, 10);
-          return obsStr >= startStr && obsStr <= endStr;
-      });
-  }, [fullMatrixData, activeDate, timeFrame]);
+  if (timeFrame === 'DAY') {
+    // startD/endD already same day
+  } else if (timeFrame === '14_DAYS') {
+    startD.setDate(endD.getDate() - 13);
+  } else if (timeFrame === 'WEEK') {
+    const { start, end } = getWeekRangeMonSun(endD);
+    startD = start;
+    endD = clampToToday(end); // if current week, cap end at today
+  } else {
+    // MONTH (full calendar month, but cap end at today if it's current/future)
+    startD = new Date(endD.getFullYear(), endD.getMonth(), 1);
+    endD = new Date(endD.getFullYear(), endD.getMonth() + 1, 0);
+    endD = clampToToday(endD);
+  }
+
+  const startStr = toLocalISODate(startD);
+  const endStr = toLocalISODate(endD);
+
+  return (fullMatrixData || []).filter((r) => {
+    if (!r.observation_date) return false;
+    const obsStr = String(r.observation_date).slice(0, 10);
+    return obsStr >= startStr && obsStr <= endStr;
+  });
+}, [fullMatrixData, activeDate, timeFrame]);
 
   const activeDataSource = activeTab === 'TIMELINE' ? dateFilteredData : fullMatrixData;
   const uniqueAreas = useMemo(() => [...new Set(activeDataSource.map(r => translate(r.area_name || 'General')))].sort(), [activeDataSource, isTranslating]);
@@ -662,7 +730,7 @@ export default function ActivityTimelineView() {
       const list = [];
       const obsMap = new Map(); // Prevent duplicate lessons for same observation
       
-      (fullMatrixData || []).forEach(r => {
+      (dateFilteredData || []).forEach(r => {
           const obsId = String(r.tc_observation_id || r.id);
           const bucket = r.bucket;
           const noteLower = String(r.note || '').toLowerCase();
@@ -703,9 +771,12 @@ export default function ActivityTimelineView() {
                   // Append activity name if multiple activities are tagged to same follow-up observation
                   const existing = obsMap.get(obsId);
                   const actName = translate(r.activity_name);
-                  if (actName && !existing.detail.includes(actName)) {
-                      existing.detail += ` • ${actName}`;
-                  }
+if (actName && existing.detail && existing.detail !== actName) {
+  // only append if actName is not already fully contained
+  const parts = new Set(existing.detail.split('•').map(s => s.trim()).filter(Boolean));
+  actName.split('•').map(s => s.trim()).filter(Boolean).forEach(p => parts.add(p));
+  existing.detail = [...parts].join(' • ');
+}
                   
                   // Append any new students
                   const newStus = filterStudentRefs(r.child_tc_ids || [r.child_tc_id]);
@@ -719,7 +790,7 @@ export default function ActivityTimelineView() {
       });
       
       return Array.from(obsMap.values()).sort((a,b) => String(b.date).localeCompare(String(a.date)));
-  }, [fullMatrixData, filterClassroomId, selectedStudentTcId, catActQuery, filterArea, filterCategory, isTranslating, studentsByTcId, resolvedIds]); 
+}, [dateFilteredData, filterClassroomId, selectedStudentTcId, catActQuery, filterArea, filterCategory, isTranslating, studentsByTcId, resolvedIds]);
 
   const pendingByArea = useMemo(() => {
       const grouped = combinedFollowUps.reduce((acc, item) => {
@@ -738,64 +809,45 @@ export default function ActivityTimelineView() {
    * Overview Stats (Action Items)
    * =========================
    */
-  const overviewStats = useMemo(() => {
-      const today = new Date();
-      const todayStr = toLocalISODate(today);
-
-      const startOfWeek = new Date(today);
-      const day = startOfWeek.getDay();
-      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Monday start
-      startOfWeek.setDate(diff);
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(endOfWeek.getDate() + 6);
-
-      const startWeekStr = toLocalISODate(startOfWeek);
-      const endWeekStr = toLocalISODate(endOfWeek);
-
-      let todayCount = 0;
-      let weekCount = 0;
-
-      fullMatrixData.forEach(r => {
-          const obsStr = r.observation_date ? String(r.observation_date).slice(0, 10) : '';
-          if (!obsStr) return;
-          
-          if (obsStr === todayStr) todayCount++;
-          if (obsStr >= startWeekStr && obsStr <= endWeekStr) weekCount++;
-      });
-
-      const totalPending = combinedFollowUps.filter(f => !f.done).length;
-
-      return { todayCount, weekCount, totalPending };
-  }, [fullMatrixData, combinedFollowUps]);
 
   // Handle Date Navigation
-  const handlePrevDate = () => {
-    const d = new Date(activeDate);
-    if (timeFrame === 'DAY') d.setDate(d.getDate() - 1);
-    else if (timeFrame === '14_DAYS') d.setDate(d.getDate() - 14);
-    else { d.setDate(1); d.setMonth(d.getMonth() - 1); }
-    setActiveDate(d);
-  };
+ const handlePrevDate = () => {
+  const d = new Date(activeDate);
+  if (timeFrame === 'DAY') d.setDate(d.getDate() - 1);
+  else if (timeFrame === '14_DAYS') d.setDate(d.getDate() - 14);
+  else if (timeFrame === 'WEEK') d.setDate(d.getDate() - 7);
+  else { d.setDate(1); d.setMonth(d.getMonth() - 1); }
+  setActiveDate(d);
+};
 
-  const handleNextDate = () => {
-    const d = new Date(activeDate);
-    if (timeFrame === 'DAY') d.setDate(d.getDate() + 1);
-    else if (timeFrame === '14_DAYS') d.setDate(d.getDate() + 14);
-    else { d.setDate(1); d.setMonth(d.getMonth() + 1); }
-    setActiveDate(d);
-  };
+const handleNextDate = () => {
+  const d = new Date(activeDate);
+  if (timeFrame === 'DAY') d.setDate(d.getDate() + 1);
+  else if (timeFrame === '14_DAYS') d.setDate(d.getDate() + 14);
+  else if (timeFrame === 'WEEK') d.setDate(d.getDate() + 7);
+  else { d.setDate(1); d.setMonth(d.getMonth() + 1); }
 
-  let dateLabel = '';
-  if (timeFrame === 'DAY') {
-    dateLabel = formatShortDateStr(toLocalISODate(activeDate));
-  } else if (timeFrame === '14_DAYS') {
-    const startD = new Date(activeDate);
-    startD.setDate(startD.getDate() - 13);
-    dateLabel = `${formatShortDateStr(toLocalISODate(startD))} - ${formatShortDateStr(toLocalISODate(activeDate))}`;
-  } else {
-    dateLabel = activeDate.toLocaleString('default', { month: 'long', year: 'numeric' });
-  }
+  // cap to today for rolling views + month too (no future navigation)
+  setActiveDate(clampToToday(d));
+};
 
+let dateLabel = '';
+if (timeFrame === 'DAY') {
+  dateLabel = formatShortDateStr(toLocalISODate(clampToToday(activeDate)));
+} else if (timeFrame === '14_DAYS') {
+  const endD = clampToToday(activeDate);
+  const startD = new Date(endD);
+  startD.setDate(endD.getDate() - 13);
+  dateLabel = `${formatShortDateStr(toLocalISODate(startD))} - ${formatShortDateStr(toLocalISODate(endD))}`;
+} else if (timeFrame === 'WEEK') {
+  const endD = clampToToday(activeDate);
+  const { start, end } = getWeekRangeMonSun(endD);
+  const endClamped = clampToToday(end);
+  dateLabel = `${formatShortDateStr(toLocalISODate(start))} - ${formatShortDateStr(toLocalISODate(endClamped))}`;
+} else {
+  const d = clampToToday(activeDate);
+  dateLabel = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+}
   /**
    * =========================
    * Render Helpers
@@ -931,23 +983,38 @@ export default function ActivityTimelineView() {
                 <ViewTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity Timeline" onClick={() => setActiveTab('TIMELINE')} />
                 <ViewTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" onClick={() => setActiveTab('PENDING')} />
                 
-                {activeTab === 'TIMELINE' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}`, marginLeft: 16 }}>
-                        <select value={timeFrame} onChange={e => setTimeFrame(e.target.value)} style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}>
-                            <option value="DAY">Day</option>
-                            <option value="14_DAYS">14 Days</option>
-                            <option value="MONTH">Month</option>
-                        </select>
-                        <div style={{ width: 1, height: 16, background: UI.border }} />
-                        <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}><ChevronLeft size={16}/></button>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
-                            {dateLabel}
-                        </span>
-                        <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}><ChevronRight size={16}/></button>
-                        <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
-                        <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>Today</button>
-                    </div>
-                )}
+                {(activeTab === 'TIMELINE' || activeTab === 'PENDING') && (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}`, marginLeft: 16 }}>
+    <select
+      value={timeFrame}
+      onChange={(e) => setTimeFrame(e.target.value)}
+      style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
+    >
+      <option value="DAY">Today</option>
+      <option value="WEEK">Week</option>
+      <option value="14_DAYS">Last 14 Days</option>
+      <option value="MONTH">Month</option>
+    </select>
+
+    <div style={{ width: 1, height: 16, background: UI.border }} />
+    <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+      <ChevronLeft size={16}/>
+    </button>
+
+    <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+      {dateLabel}
+    </span>
+
+    <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+      <ChevronRight size={16}/>
+    </button>
+
+    <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
+    <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
+      Today
+    </button>
+  </div>
+)}
               </div>
             </div>
 
@@ -1044,12 +1111,6 @@ export default function ActivityTimelineView() {
         {activeTab === 'PENDING' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             
-            {/* Action Items Overview */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-                <StatCard title="Today's Activity" count={overviewStats.todayCount} icon={Clock} color={UI.primary} />
-                <StatCard title="This Week's Activity" count={overviewStats.weekCount} icon={CalendarDays} color={UI.primary} />
-                <StatCard title="Total Pending Actions" count={overviewStats.totalPending} icon={AlertCircle} color={UI.danger} />
-            </div>
 
             <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
                 <div style={{ padding: '24px 24px 16px' }}>
