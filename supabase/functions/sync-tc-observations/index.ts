@@ -21,12 +21,16 @@ serve(async (req) => {
 
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 1. Fetch observations ordered by date ascending!
-    // This ensures the NEWEST note is applied last and overwrites older ones.
+    // DAILY SYNC OPTIMIZATION: Only fetch notes from the last 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoffDate = sevenDaysAgo.toISOString();
+
     const { data: observations, error: obsError } = await supabaseClient
       .from('tc_observations')
       .select('text_content, date')
       .not('text_content', 'is', null)
+      .gte('date', cutoffDate) // <-- THIS SAVES YOUR PERFORMANCE
       .order('date', { ascending: true }); 
     
     if (obsError) {
@@ -35,15 +39,14 @@ serve(async (req) => {
 
     if (!observations || observations.length === 0) {
       return new Response(JSON.stringify({ 
-        success: false, 
-        message: "No observations found in your tc_observations table." 
+        success: true, 
+        message: "No new observations in the last 7 days." 
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 });
     }
 
     let updatedCardsCount = 0;
     const updatePromises = [];
 
-    // 2. Parse each observation and prepare the update queries
     for (const obs of observations) {
       const text = obs.text_content || "";
       
@@ -56,8 +59,8 @@ serve(async (req) => {
         .replace(/introduced|practicing|mastered/gi, '')
         .replace(/and she wrote:/gi, '')
         .replace(/and he wrote:/gi, '')
-        .replace(/،/g, '') // Arabic comma
-        .replace(/,/g, '')  // English comma
+        .replace(/،/g, '') 
+        .replace(/,/g, '')  
         .trim();
 
       if (childMatches.length === 0 || lessonMatches.length === 0 || !cleanNote) continue;
@@ -65,7 +68,6 @@ serve(async (req) => {
       const childIds = childMatches.map(m => m[1]);
       const lessonIds = lessonMatches.map(m => m[1]);
 
-      // Group all the tc_level_ids for THIS specific note
       const tcLevelIdsToUpdate = [];
       for (const cId of childIds) {
         for (const lId of lessonIds) {
@@ -74,7 +76,6 @@ serve(async (req) => {
       }
 
       if (tcLevelIdsToUpdate.length > 0) {
-        // Prepare the promise (but don't wait for it yet)
         const dbPromise = supabaseClient
           .from('tc_plan_items')
           .update({ notes: cleanNote })
@@ -87,7 +88,6 @@ serve(async (req) => {
       }
     }
 
-    // 3. Fire the database updates concurrently in chunks of 50
     const chunkSize = 50;
     for (let i = 0; i < updatePromises.length; i += chunkSize) {
       const chunk = updatePromises.slice(i, i + chunkSize);
@@ -96,7 +96,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({ 
       success: true, 
-      message: `Fast-scanned ${observations.length} database observations. Successfully attached the latest notes to ${updatedCardsCount} Kanban cards.` 
+      message: `Daily Sync: Scanned ${observations.length} recent notes. Attached ${updatedCardsCount} updates to Kanban cards.` 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,

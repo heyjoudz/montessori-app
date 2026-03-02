@@ -15,36 +15,24 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // --- THE FIX IS HERE ---
-    // Read the page number from the POST body sent by React
-    let startPage = 1;
-    try {
-      const reqBody = await req.json();
-      if (reqBody.page) startPage = reqBody.page;
-    } catch (e) {
-      // If the body is empty or fails to parse, it just defaults to 1
-    }
-    
-    // Safety limit: Only process 5 pages (500 items) per run
-    const maxPagesPerRun = 5; 
+    // DAILY SYNC LIMIT: Only process the 3 most recent pages (300 items)
+    const maxPagesToFetch = 3; 
 
     let allActivities = [];
-    let page = startPage;
+    let page = 1;
     let keepFetching = true;
-    let pagesFetched = 0;
 
-    // Loop through pages safely
-    while (keepFetching && pagesFetched < maxPagesPerRun) {
+    // Loop through just the first 3 pages
+    while (keepFetching && page <= maxPagesToFetch) {
       const tcUrl = `https://www.transparentclassroom.com/api/v1/activity.json?classroom_id=19184&page=${page}&per_page=100`;
       const res = await fetch(tcUrl, { headers: { 'X-TransparentClassroomToken': tcApiToken } });
       const data = await res.json();
 
       if (data.length === 0) {
-        keepFetching = false; // We reached the end of the history!
+        keepFetching = false;
       } else {
         allActivities = [...allActivities, ...data];
         page++;
-        pagesFetched++;
       }
     }
 
@@ -66,9 +54,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({ 
       success: true, 
       count: formatted.length,
-      pages_fetched: pagesFetched,
-      next_page: keepFetching ? page : null, 
-      message: `Fetched ${formatted.length} observations from page ${startPage} to ${page - 1}.` 
+      message: `Daily Sync: Fetched the ${formatted.length} most recent observations.` 
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err) {

@@ -57,11 +57,22 @@ const getItemDateObj = (it) => {
 
 const formatShortDate = (d) => {
   if (!d) return '';
+
+  // If it's a plain YYYY-MM-DD, parse as LOCAL midnight (prevents timezone shift)
+  if (typeof d === 'string') {
+    const s = d.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const dtLocal = new Date(`${s}T00:00:00`);
+      if (!Number.isNaN(dtLocal.getTime())) {
+        return dtLocal.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+    }
+  }
+
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
-
 const normStatus = (raw) => {
   const s = String(raw || '').trim().toUpperCase();
   if (s === 'I' || s === 'P' || s === 'N') return s;
@@ -93,6 +104,39 @@ const statusConfig = {
 
 const getRawFirstTitle = (it) => clean(it?.raw_activity) || clean(it?.activity) || clean(getNormalizedItem(it || {})?.rawActivity) || clean(getNormalizedItem(it || {})?.title) || 'Untitled Activity';
 
+const bucketToLabel = (b) => {
+  const x = String(b || '').toUpperCase();
+  if (x === 'INTRODUCED') return 'Introduced';
+  if (x === 'PRACTICED') return 'Practiced';
+  if (x === 'REWORK') return 'Needs Review';
+  if (x === 'MASTERED') return 'Mastered';
+  return x || '';
+};
+
+const extractPeersFromHtml = (html, studentFirstName) => {
+  if (!html) return [];
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const peers = [...new Set(Array.from(doc.querySelectorAll('a.child-link')).map(a => a.textContent.trim()))]
+      .filter(Boolean);
+
+    const sName = (studentFirstName || '').toLowerCase();
+    return peers.filter(p => {
+      const pl = p.toLowerCase();
+      return !sName || (pl !== sName && !pl.includes(sName));
+    });
+  } catch (e) {
+    return [];
+  }
+};
+
+const getObsDate = (item) => (
+  iso10(item?.observation_date) ||
+  iso10(item?.date) ||
+  iso10(item?.observationDate) ||
+  iso10(item?.created_at) ||
+  ''
+);
 // ---------------------------
 // TC EXTRACTION & CLEANING
 // ---------------------------
@@ -435,72 +479,57 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
       return groups;
   }, [combinedFollowUps, hideCompleted]);
 
-  // Extract Substantial General Observations (DE-DUPLICATED)
-  const substantialObservations = useMemo(() => {
-      const rawMap = new Map();
-      tcDataRaw.forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
-      
-      const obsMap = new Map(); // Use Map to prevent duplicates
-      
-      tcData.forEach(tc => {
-          const obsId = String(tc.tc_observation_id || tc.id);
-          
-          if (!obsMap.has(obsId)) {
-              const raw = rawMap.get(obsId) || {};
-              // PASS TRUE TO PRESERVE LESSON NAMES AND STUDENT NAMES!
-              const note = cleanObservationNote(student, tc, raw, true); 
-              
-              if (note && note.length > 10) {
-                  let peersList = [];
-                  if (raw.html_content) {
-                      const doc = new DOMParser().parseFromString(raw.html_content, 'text/html');
-                      peersList = [...new Set(Array.from(doc.querySelectorAll('a.child-link')).map(a => a.textContent.trim()))];
-                      const sName = student?.first_name ? student.first_name.toLowerCase() : '';
-                      peersList = peersList.filter(p => p.toLowerCase() !== sName && !p.toLowerCase().includes(sName));
-                  }
+// ✅ TODAY SUMMARY (Introduced + Practiced), grouped by Area → Category → Activity
+const todayTcSummary = useMemo(() => {
+  const todayISO = dateISO(new Date()); // "today" in real time
 
-                  const actName = extractLessonName({html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name});
+  const rawMap = new Map();
+  tcDataRaw.forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
 
-                  obsMap.set(obsId, {
-                      id: tc.id,
-                      date: tc.observation_date || tc.date,
-                      area: new Set([tc.area_name || 'General']),
-                      category: new Set([tc.category_name || '']),
-                      activity: actName,
-                      peers: peersList,
-                      note: note
-                  });
-              }
-          } else {
-              // If same observation mapped to multiple areas/categories, combine them
-              if (tc.area_name) obsMap.get(obsId).area.add(tc.area_name);
-              if (tc.category_name) obsMap.get(obsId).category.add(tc.category_name);
-          }
-      });
-      
-      const obs = Array.from(obsMap.values()).map(o => ({
-          ...o,
-          area: Array.from(o.area).filter(Boolean).join(' • '),
-          category: Array.from(o.category).filter(Boolean).join(' • '),
-      }));
+  const onlyToday = (tcData || []).filter(tc => iso10(tc.observation_date) === todayISO);
 
-      manualObservationsDashboard.forEach(m => {
-          if (m.observation && m.observation.length > 5) {
-              obs.push({
-                  id: `manual-${m.id}`,
-                  date: m.date || m.created_at,
-                  area: 'General',
-                  category: '',
-                  activity: '',
-                  peers: [],
-                  note: m.observation
-              });
-          }
-      });
-      
-      return obs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 15);
-  }, [tcData, tcDataRaw, student, manualObservationsDashboard]);
+  const addTo = (root, tc) => {
+    const obsId = String(tc.tc_observation_id || tc.id);
+    const raw = rawMap.get(obsId) || {};
 
+    const bucket = tc.bucket || inferTcBucket(tc.note || raw.text_content);
+    if (bucket !== 'INTRODUCED' && bucket !== 'PRACTICED') return; // only these two for overview
+
+    const area = tc.area_name || 'General';
+    const cat = tc.category_name || 'General';
+    const actName = extractLessonName({
+      html_content: raw.html_content,
+      text_content: raw.text_content,
+      activity_name: tc.activity_name
+    }) || 'Activity';
+
+    const cleaned = cleanObservationNote(student, tc, raw); // keep it short/clean
+
+    if (!root[bucket]) root[bucket] = {};
+    if (!root[bucket][area]) root[bucket][area] = {};
+    if (!root[bucket][area][cat]) root[bucket][area][cat] = {};
+    if (!root[bucket][area][cat][actName]) root[bucket][area][cat][actName] = [];
+
+    if (cleaned) root[bucket][area][cat][actName].push(cleaned);
+  };
+
+  const grouped = {};
+  onlyToday.forEach(tc => addTo(grouped, tc));
+
+  return grouped; // shape: { INTRODUCED: { Area: { Cat: { Activity: [notes] }}} , PRACTICED: ... }
+}, [tcData, tcDataRaw, student]);
+
+const otherTeacherNotes = useMemo(() => {
+  const isOther = (m) => {
+    const flag = String(m?.status || m?.type || '').trim().toLowerCase();
+    return flag === 'other';
+  };
+
+  return (manualObservationsDashboard || [])
+    .filter(isOther)
+    .sort((a, b) => new Date(b.date || b.created_at).getTime() - new Date(a.date || a.created_at).getTime())
+    .slice(0, 12);
+}, [manualObservationsDashboard]);
   const toggleActionStatus = async (item) => {
     const isDoneNow = item.done; 
     
@@ -584,36 +613,109 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
             ) : (<div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No specific focus areas identified below 40% from recent assessments.</div>)}
           </ThemedCard>
 
-          {/* 2. GENERAL OBSERVATIONS */}
-          <ThemedCard style={{ padding: 24 }} accentColor={UI.accentPeach}>
-            <SectionHeader icon={MessageSquare} title="Recent General Observations" />
-            {substantialObservations.length === 0 ? (
-                <div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No substantial observations found recently.</div>
-            ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 300, overflowY: 'auto', paddingRight: 8 }} className="mb-hide-scroll">
-                    {substantialObservations.map((obs, idx) => (
-                        <div key={`${obs.id}-${idx}`} style={{ paddingBottom: 16, borderBottom: idx < substantialObservations.length - 1 ? `1px dashed ${UI.border}` : 'none' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 11, fontWeight: 800, color: UI.primary, textTransform: 'uppercase' }}>{obs.area}</span>
-                                {obs.category && <span style={{ fontSize: 11, color: UI.muted, fontWeight: 600 }}>• {obs.category}</span>}
-                                {obs.activity && <span style={{ fontSize: 11, color: UI.text }}>• {obs.activity}</span>}
-                                <span style={{ fontSize: 11, color: UI.muted }}>• {formatShortDate(obs.date)}</span>
-                            </div>
-                            
-                            {obs.peers?.length > 0 && (
-                                <div style={{ fontSize: 11, color: UI.muted, marginBottom: 6, fontStyle: 'italic' }}>
-                                    Shared with: <span style={{ fontWeight: 500 }}>{obs.peers.join(', ')}</span>
-                                </div>
-                            )}
+{/* 2A. TODAY OVERVIEW */}
+<ThemedCard style={{ padding: 24 }} accentColor={UI.accentPeach}>
+  <SectionHeader icon={MessageSquare} title="Today Overview" />
 
-                            <div style={{ fontSize: 13, color: UI.text, lineHeight: 1.5, background: '#fafafa', padding: '10px 14px', borderRadius: 4, borderLeft: `2px solid ${UI.border}` }}>
-                                "{obs.note}"
-                            </div>
-                        </div>
-                    ))}
+  {(!todayTcSummary?.INTRODUCED && !todayTcSummary?.PRACTICED) ? (
+    <div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>
+      No “Introduced” or “Practiced” items found for today.
+    </div>
+  ) : (
+    <div style={{ display: 'grid', gap: 16 }}>
+      {['INTRODUCED', 'PRACTICED'].map((bucket) => {
+        const label = bucket === 'INTRODUCED' ? 'got Introduced to' : 'Practiced';
+        const badgeColor = bucket === 'INTRODUCED' ? '#1E88E5' : '#F5B041';
+        const block = todayTcSummary?.[bucket];
+        const studentName = student?.first_name || 'Student';
+
+        if (!block || Object.keys(block).length === 0) return null;
+
+        return (
+          <div key={bucket} style={{ border: `1px solid ${UI.border}`, background: '#fff', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ fontSize: 12, color: UI.muted }}>
+                  Today, <span style={{ fontWeight: 700, color: UI.text }}>{studentName}</span> {label.toLowerCase()} :
                 </div>
-            )}
-          </ThemedCard>
+              </div>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: badgeColor, padding: '2px 8px', borderRadius: 4 }}>
+                {Object.keys(block).length}
+              </div>
+            </div>
+
+            <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 280, overflowY: 'auto' }} className="mb-hide-scroll">
+              {Object.entries(block).sort((a,b) => a[0].localeCompare(b[0])).map(([area, cats]) => {
+                const subjStyle = getSubjectStyle(area);
+
+                return (
+                  <div key={area} style={{ borderLeft: `4px solid ${subjStyle.accent}`, paddingLeft: 10 }}>
+                    {/* AREA HEADER w/ colored dot */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 8px',
+                      borderRadius: 4,
+                      background: rgba(subjStyle.accent, 0.08),
+                      border: `1px solid ${rgba(subjStyle.accent, 0.18)}`
+                    }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: subjStyle.accent }} />
+                      <div style={{ fontSize: 11, fontWeight: 800, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        {area}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8, paddingLeft: 6 }}>
+                      {Object.entries(cats).sort((a,b) => a[0].localeCompare(b[0])).map(([cat, acts]) => (
+                        <div key={cat}>
+                          {cat !== 'General' && (
+                            <div style={{ fontSize: 11, color: UI.muted, fontWeight: 700, marginBottom: 6 }}>
+                              {cat}
+                            </div>
+                          )}
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {Object.entries(acts).sort((a,b) => a[0].localeCompare(b[0])).map(([act, notes]) => (
+                              <div key={act} style={{
+                                background: '#fff',
+                                border: `1px solid ${UI.border}`,
+                                padding: '10px 12px',
+                                borderRadius: 4
+                              }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: UI.text}}>
+                                  {act}
+                                </div>
+
+                                {notes?.length > 0 && (
+                                  <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    {notes.slice(0, 2).map((n, idx) => (
+                                      <div key={idx} style={{ fontSize: 12, color: UI.muted, fontStyle: 'italic', lineHeight: 1.4 }}>
+                                        “{n}”
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  )}
+</ThemedCard>
+
+{/* 2B. TEACHER NOTES (OTHER) — separate card below */}
+
       </div>
 
       {/* 3. FOLLOW-UP ITEMS (Grouped by Area) */}
@@ -725,82 +827,55 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
     fetchData();
   }, [student?.id, activeDateObj, timeFrame]);
 
-  const { processedTc, combinedObservations } = useMemo(() => {
-    const rawMap = new Map();
-    tcDataRaw.forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
+  const { processedTc } = useMemo(() => {
+  const rawMap = new Map();
+  tcDataRaw.forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
 
-    const pTc = [];
-    const pMap = new Map();
-    tcData.forEach(tc => {
-      const id = tc.tc_observation_id || tc.id;
-      if (pMap.has(id)) return; // Prevent duplicates in Kanban
+  const pTc = [];
+  const pMap = new Map();
 
-      const raw = rawMap.get(String(id)) || {};
-      const cleanedNote = cleanObservationNote(student, tc, raw);
-      const actName = extractLessonName({ html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name });
-      
-      const item = { ...tc, activity_name: actName, cleanedNote, bucket: tc.bucket || inferTcBucket(tc.note || raw.text_content) };
-      pMap.set(id, item);
-      pTc.push(item);
+  tcData.forEach(tc => {
+    const id = tc.tc_observation_id || tc.id;
+    if (pMap.has(id)) return;
+
+    const raw = rawMap.get(String(id)) || {};
+    const cleanedNote = cleanObservationNote(student, tc, raw);
+    const actName = extractLessonName({
+      html_content: raw.html_content,
+      text_content: raw.text_content,
+      activity_name: tc.activity_name
     });
 
-    const cObs = [];
-    (studentPlans || []).filter(p => {
-        if (!p.notes || String(p.notes).trim().length === 0) return false;
-        const pDate = p.planning_date || p.date || p.created_at;
-        if (!pDate) return false;
-        const dObj = new Date(pDate);
-        let start, end;
-        if (timeFrame === 'WEEK') {
-            const mon = startOfWeekMonday(activeDateObj);
-            start = new Date(dateISO(mon));
-            end = new Date(dateISO(addDays(mon, 6)));
-        } else {
-            start = new Date(`${activeDateObj.getFullYear()}-${pad2(activeDateObj.getMonth() + 1)}-01T00:00:00`);
-            end = new Date(activeDateObj.getFullYear(), activeDateObj.getMonth() + 1, 0, 23, 59, 59);
-        }
-        return dObj >= start && dObj <= end;
-    }).forEach(p => {
-        const norm = getNormalizedItem(p);
-        cObs.push({
-            id: `obs-plan-${p.id}`, type: 'academic', isPlan: true, date: p.planning_date || p.date || p.created_at,
-            observation: p.notes, activity: getRawFirstTitle(p), area: norm.area || p.area || 'General', category: p.category || '', peers: [], tcStatus: statusConfig[normStatus(p.status)]?.label || ''
-        });
-    });
+    const item = {
+      ...tc,
+      tc_observation_id: id,
+      activity_name: actName,
+      cleanedNote,
+      bucket: tc.bucket || inferTcBucket(tc.note || raw.text_content),
+      _raw_html: raw.html_content || '',
+    };
 
-    manualObservations.forEach(o => {
-        cObs.push({
-            id: `obs-db-${o.id}`, type: o.type || 'behavioral', date: o.date || o.created_at,
-            observation: o.observation, activity: '', area: '', category: '', peers: [], tcStatus: ''
-        });
-    });
+    pMap.set(id, item);
+    pTc.push(item);
+  });
 
-    pTc.forEach(tc => {
-        const obsId = tc.tc_observation_id || tc.id;
-        const raw = rawMap.get(String(obsId)) || {};
-        let peers = [];
-        let statusBadge = tc.bucket;
+  return { processedTc: pTc };
+}, [tcData, tcDataRaw, student]);
 
-        if (raw.html_content) {
-            const doc = new DOMParser().parseFromString(raw.html_content, 'text/html');
-            peers = [...new Set(Array.from(doc.querySelectorAll('a.child-link')).map(a => a.textContent.trim()))];
-            const emNode = doc.querySelector('em');
-            if (emNode) statusBadge = emNode.textContent.trim();
-        }
+  const uniqueAreas = useMemo(
+  () => [...new Set(processedTc.map(t => t.area_name).filter(Boolean))].sort(),
+  [processedTc]
+);
 
-        cObs.push({
-            id: `obs-tc-${obsId}`, type: 'academic', isTc: true, date: tc.observation_date || tc.date,
-            observation: tc.cleanedNote, activity: tc.activity_name, category: tc.category_name || '',
-            area: tc.area_name || '', peers: peers, tcStatus: statusBadge 
-        });
-    });
-
-    cObs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return { processedTc: pTc, combinedObservations: cObs };
-  }, [tcData, tcDataRaw, studentPlans, manualObservations, student, activeDateObj, timeFrame]);
-
-  const uniqueAreas = useMemo(() => [...new Set(combinedObservations.map(o => o.area).filter(Boolean))].sort(), [combinedObservations]);
-  const uniqueCategories = useMemo(() => [...new Set(combinedObservations.filter(o => filterArea === 'ALL' || o.area === filterArea).map(o => o.category).filter(Boolean))].sort(), [combinedObservations, filterArea]);
+const uniqueCategories = useMemo(
+  () => [...new Set(
+      processedTc
+        .filter(t => filterArea === 'ALL' || t.area_name === filterArea)
+        .map(t => t.category_name)
+        .filter(Boolean)
+    )].sort(),
+  [processedTc, filterArea]
+);
 
   const filteredTc = processedTc.filter(tc => {
     if (filterArea !== 'ALL' && tc.area_name !== filterArea) return false;
@@ -814,71 +889,100 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
     return true;
   });
 
-  const filteredList = combinedObservations.filter(o => {
-    if (filterArea !== 'ALL' && o.area !== filterArea) return false;
-    if (filterCategory !== 'ALL' && o.category !== filterCategory) return false;
-    if (filterStatus !== 'ALL') {
-        const s = String(o.tcStatus || '').toUpperCase();
-        if (filterStatus === 'I' && !s.includes('INTRODUC') && s !== 'I') return false;
-        if (filterStatus === 'P' && !s.includes('PRACTIC') && s !== 'P') return false;
-        if (filterStatus === 'N' && !s.includes('REVIEW') && !s.includes('REWORK') && !s.includes('NEED') && s !== 'N') return false;
-    }
-    return true;
-  });
+  const filteredList = filteredTc;
 
-  const KanbanColumn = ({ title, color, count, items }) => {
-    const [expandedAreas, setExpandedAreas] = useState({});
-    const toggleArea = (areaName) => setExpandedAreas(prev => ({ ...prev, [areaName]: !prev[areaName] }));
-    const grouped = items.reduce((acc, item) => {
-        const area = item.area_name || 'General';
-        const cat = item.category_name || 'General';
-        if (!acc[area]) acc[area] = {};
-        if (!acc[area][cat]) acc[area][cat] = [];
-        acc[area][cat].push(item);
-        return acc;
+const KanbanColumn = ({ title, color, count, items }) => {
+  const grouped = useMemo(() => {
+    return items.reduce((acc, item) => {
+      const area = item.area_name || 'General';
+      const cat = item.category_name || 'General';
+      if (!acc[area]) acc[area] = {};
+      if (!acc[area][cat]) acc[area][cat] = [];
+      acc[area][cat].push(item);
+      return acc;
     }, {});
+  }, [items]);
 
-    return (
-      <div style={{ background: '#F8FAFC', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderTop: `4px solid ${color}`, overflow: 'hidden', minWidth: 320, flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${UI.border}`, background: '#FFFFFF' }}>
-          <div style={{ fontWeight: 600, fontSize: 14, color: UI.primary, letterSpacing: 0.5 }}>{title}</div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#fff', background: color, padding: '2px 8px', borderRadius: SQUARE_RADIUS }}>{count}</div>
-        </div>
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 20, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
-          {items.length === 0 && <div style={{ textAlign: 'center', color: UI.muted, fontSize: 13, padding: 20 }}>Empty</div>}
-          {Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0])).map(([areaName, cats]) => {
-              const subjStyle = getSubjectStyle(areaName);
-              const isExpanded = expandedAreas[areaName];
-              return (
-                  <div key={areaName} style={{ display: 'flex', flexDirection: 'column', gap: isExpanded ? 12 : 0 }}>
-                      <div onClick={() => toggleArea(areaName)} style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: isExpanded ? `2px solid ${rgba(subjStyle.accent, 0.3)}` : `1px solid ${UI.border}`, paddingBottom: 6, cursor: 'pointer', userSelect: 'none' }}>
-                          {isExpanded ? <ChevronDown size={14} color={UI.primary} /> : <ChevronRight size={14} color={UI.primary} />}
-                          <div style={{ width: 10, height: 10, background: subjStyle.accent, borderRadius: 2 }} />
-                          <span style={{ fontSize: 12, fontWeight: 700, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{areaName}</span>
-                      </div>
-                      {isExpanded && Object.entries(cats).sort((a, b) => a[0].localeCompare(b[0])).map(([catName, areaItems]) => (
-                          <div key={catName} style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                              {catName !== 'General' && (<div style={{ fontSize: 11, fontWeight: 600, color: UI.muted, paddingLeft: 22 }}>{catName}</div>)}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
-                                  {areaItems.map(item => (
-                                      <div key={item.id} style={{ background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                              <div style={{ fontSize: 12, fontWeight: 600, color: UI.text, lineHeight: 1.3 }}>{item.activity_name || 'Activity'}</div>
-                                              <div style={{ fontSize: 10, color: UI.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>{formatShortDate(item.observation_date)}</div>
-                                          </div>
-                                          {item.cleanedNote && <div style={{ fontSize: 11, color: UI.muted, lineHeight: 1.4, fontStyle: 'italic', borderTop: `1px dashed ${UI.border}`, paddingTop: 6, marginTop: 2 }}>"{item.cleanedNote}"</div>}
-                                      </div>
-                                  ))}
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-              );
-          })}
-        </div>
+  const [expandedAreas, setExpandedAreas] = useState({});
+
+  // ✅ Expand all areas by default (but don't fight the user after they toggle)
+  useEffect(() => {
+    const areaNames = Object.keys(grouped || {});
+    if (areaNames.length === 0) return;
+
+    setExpandedAreas(prev => {
+      // If user already has any keys set, keep them (don’t override)
+      const hasAnyUserChoice = prev && Object.keys(prev).length > 0;
+      if (hasAnyUserChoice) return prev;
+
+      // Otherwise expand all by default
+      const next = {};
+      areaNames.forEach(a => { next[a] = true; });
+      return next;
+    });
+  }, [grouped]);
+
+  const toggleArea = (areaName) =>
+    setExpandedAreas(prev => ({ ...prev, [areaName]: !prev[areaName] }));
+
+  return (
+    <div style={{ background: '#F8FAFC', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderTop: `4px solid ${color}`, overflow: 'hidden', minWidth: 320, flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${UI.border}`, background: '#FFFFFF' }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: UI.primary, letterSpacing: 0.5 }}>{title}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#fff', background: color, padding: '2px 8px', borderRadius: SQUARE_RADIUS }}>{count}</div>
       </div>
-    );
-  };
+
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 20, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
+        {items.length === 0 && <div style={{ textAlign: 'center', color: UI.muted, fontSize: 13, padding: 20 }}>Empty</div>}
+
+        {Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0])).map(([areaName, cats]) => {
+          const subjStyle = getSubjectStyle(areaName);
+          const isExpanded = expandedAreas[areaName] !== false; // default true unless explicitly set false
+
+          return (
+            <div key={areaName} style={{ display: 'flex', flexDirection: 'column', gap: isExpanded ? 12 : 0 }}>
+              <div
+                onClick={() => toggleArea(areaName)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  borderBottom: isExpanded ? `2px solid ${rgba(subjStyle.accent, 0.3)}` : `1px solid ${UI.border}`,
+                  paddingBottom: 6, cursor: 'pointer', userSelect: 'none'
+                }}
+              >
+                {isExpanded ? <ChevronDown size={14} color={UI.primary} /> : <ChevronRight size={14} color={UI.primary} />}
+                <div style={{ width: 10, height: 10, background: subjStyle.accent, borderRadius: 2 }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{areaName}</span>
+              </div>
+
+              {isExpanded && Object.entries(cats).sort((a, b) => a[0].localeCompare(b[0])).map(([catName, areaItems]) => (
+                <div key={catName} style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  {catName !== 'General' && (<div style={{ fontSize: 11, fontWeight: 600, color: UI.muted, paddingLeft: 22 }}>{catName}</div>)}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
+                    {areaItems.map(item => (
+                      <div key={item.id} style={{ background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: UI.text, lineHeight: 1.3 }}>{item.activity_name || 'Activity'}</div>
+<div style={{ fontSize: 10, color: UI.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>
+  {formatShortDate(getObsDate(item))}
+</div>                        </div>
+                        {item.cleanedNote && (
+                          <div style={{ fontSize: 11, color: UI.muted, lineHeight: 1.4, fontStyle: 'italic', borderTop: `1px dashed ${UI.border}`, paddingTop: 6, marginTop: 2 }}>
+                            "{item.cleanedNote}"
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
   const handleAddObservation = async (payload) => {
     try { 
@@ -944,27 +1048,64 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
                   <div>Date</div><div>Area</div><div>Category</div><div>Status</div><div>With</div><div>Observation Details</div>
               </div>
               {filteredList.map((o) => {
-                  const peersList = (o.peers || []).filter(p => {
-                      if (!p) return false;
-                      const sName = student?.first_name ? student.first_name.toLowerCase() : '';
-                      return p.toLowerCase() !== sName && !p.toLowerCase().includes(sName);
-                  });
-                  return (
-                      <div key={o.id} style={{ display: 'grid', gridTemplateColumns: '85px 120px 130px 100px 140px 1fr', gap: 16, alignItems: 'flex-start', background: '#fff', padding: '16px 24px', borderBottom: `1px solid ${UI.border}` }}>
-                        <div style={{ fontSize: 12, color: UI.muted, fontWeight: 500 }}>{safeDate(o.date)}</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: UI.primary, textTransform: 'uppercase' }}>{o.area || '—'}</div>
-                        <div style={{ fontSize: 12, color: UI.text }}>{o.category || '—'}</div>
-                        <div>{o.tcStatus ? <StatusBadge status={o.tcStatus} /> : <span style={{ color: UI.border }}>—</span>}</div>
-                        <div style={{ fontSize: 11, color: UI.muted, lineHeight: 1.4 }}>{peersList.length > 0 ? peersList.join(', ') : '—'}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {o.activity && <div style={{ fontSize: 13, fontWeight: 600, color: UI.text }}>{o.activity}</div>}
-                            <div style={{ fontSize: 13, color: UI.text, lineHeight: '1.5' }}>
-                                {o.observation ? o.observation : <span style={{color: UI.muted, fontStyle: 'italic'}}></span>}
-                            </div>
-                        </div>
-                      </div>
-                  );
-              })}
+  const peersList = extractPeersFromHtml(o._raw_html, student?.first_name);
+
+  return (
+    <div
+      key={String(o.tc_observation_id || o.id)}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '85px 120px 130px 100px 140px 1fr',
+        gap: 16,
+        alignItems: 'flex-start',
+        background: '#fff',
+        padding: '16px 24px',
+        borderBottom: `1px solid ${UI.border}`
+      }}
+    >
+      {/* DATE = observation_date */}
+      <div style={{ fontSize: 12, color: UI.muted, fontWeight: 500 }}>
+        {safeDate(o.observation_date)}
+      </div>
+
+      {/* AREA/CATEGORY from TC */}
+      <div style={{ fontSize: 12, fontWeight: 600, color: UI.primary, textTransform: 'uppercase' }}>
+        {o.area_name || '—'}
+      </div>
+
+      <div style={{ fontSize: 12, color: UI.text }}>
+        {o.category_name || '—'}
+      </div>
+
+      {/* STATUS from bucket */}
+      <div>
+        <StatusBadge status={bucketToLabel(o.bucket)} />
+      </div>
+
+      {/* WITH from HTML */}
+      <div style={{ fontSize: 11, color: UI.muted, lineHeight: 1.4 }}>
+        {peersList.length > 0 ? peersList.join(', ') : ''}
+      </div>
+
+      {/* DETAILS from activity_name + cleanedNote */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {o.activity_name && (
+          <div style={{ fontSize: 13, fontWeight: 600, color: UI.text }}>
+            {o.activity_name}
+          </div>
+        )}
+
+        <div style={{ fontSize: 13, color: UI.text, lineHeight: '1.5' }}>
+          {o.cleanedNote ? (
+            o.cleanedNote
+          ) : (
+            <span style={{ color: UI.muted, fontStyle: 'italic' }}></span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+})}
             </div>
           )}
         </ThemedCard>

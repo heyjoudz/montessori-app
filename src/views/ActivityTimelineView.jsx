@@ -14,13 +14,15 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Check,
   User,
   Maximize2,
   Minimize2,
   Filter,
   Target,
-  History
+  History,
+  CalendarDays
 } from 'lucide-react';
 
 /**
@@ -66,6 +68,14 @@ const UI = {
  */
 const clean = (s) => String(s || '').trim();
 
+// Bulletproof local date string generator (YYYY-MM-DD)
+const toLocalISODate = (d) => {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+};
+
 const getRawFirstTitle = (it) => 
   clean(it?.raw_activity) || 
   clean(it?.activity) || 
@@ -84,7 +94,8 @@ const applyTranslations = (text) => {
 
 const formatShortDateStr = (d) => {
   if (!d) return '';
-  const dt = new Date(d);
+  // Fix off-by-one by replacing hyphens if it's a string date
+  const dt = typeof d === 'string' ? new Date(d.replace(/-/g, '/')) : new Date(d);
   if (Number.isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
@@ -96,12 +107,6 @@ const formatStudentName = (s) => {
   const initial = last ? `${last[0]}.` : '';
   const name = `${first} ${initial}`.trim();
   return name || 'Unknown';
-};
-
-const daysAgoISO = (n) => {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
 };
 
 const inferBucket = (text) => {
@@ -224,6 +229,18 @@ const ViewTab = ({ active, icon: Icon, label, onClick }) => (
   <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: R, border: active ? `1px solid ${UI.primary}` : `1px solid transparent`, background: active ? rgba(UI.primary, 0.05) : 'transparent', color: active ? UI.primary : UI.muted, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none' }}>
     {Icon ? <Icon size={14} color={active ? UI.primary : UI.muted} /> : null} {label}
   </button>
+);
+
+const StatCard = ({ title, count, icon: Icon, color }) => (
+    <div style={{ background: '#fff', borderRadius: R, padding: '16px 20px', border: `1px solid ${UI.border}`, borderLeft: `4px solid ${color}`, display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+        <div style={{ background: rgba(color, 0.1), padding: 12, borderRadius: '50%' }}>
+            <Icon size={20} color={color} />
+        </div>
+        <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: UI.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: UI.text, marginTop: 4 }}>{count}</div>
+        </div>
+    </div>
 );
 
 /**
@@ -366,48 +383,38 @@ export default function ActivityTimelineView() {
   const [activeTab, setActiveTab] = useState('TIMELINE'); 
   const [isTranslating, setIsTranslating] = useState(false);
 
+  // Timeframe and Date filtering
+  const [timeFrame, setTimeFrame] = useState('14_DAYS'); // 'MONTH', '14_DAYS', 'DAY'
+  const [activeDate, setActiveDate] = useState(new Date());
+
   // Data
-  const [rows, setRows] = useState([]);
   const [fullMatrixData, setFullMatrixData] = useState([]); 
   const [studentsByTcId, setStudentsByTcId] = useState({});
   const [studentsList, setStudentsList] = useState([]);
   const [classrooms, setClassrooms] = useState([]);
 
-  // Filters - Global
+  // Shared Filters
   const [filterClassroomId, setFilterClassroomId] = useState('ALL');
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedStudentTcId, setSelectedStudentTcId] = useState(null);
-  
-  // Filters - Timeline (Activity Log)
   const [catActQuery, setCatActQuery] = useState('');
   const [filterArea, setFilterArea] = useState('ALL');
   const [filterCategory, setFilterCategory] = useState('ALL');
-  const [expandAll, setExpandAll] = useState(false);
   
-  // Filters - Matrix (Curriculum Overview)
-  const [matrixCatActQuery, setMatrixCatActQuery] = useState('');
-  const [matrixFilterArea, setMatrixFilterArea] = useState('ALL');
-  const [matrixFilterCategory, setMatrixFilterCategory] = useState('ALL');
-  const [matrixFilterStatus, setMatrixFilterStatus] = useState('ALL');
-  const [matrixExpandAll, setMatrixExpandAll] = useState(false);
-
+  // Tab States
+  const [expandAll, setExpandAll] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false); 
+  const [matrixCatActQuery, setMatrixCatActQuery] = useState('');
 
   const translate = (s) => (isTranslating ? applyTranslations(s) : s);
 
   const clearAllFilters = () => {
     setStudentSearch('');
     setSelectedStudentTcId(null);
-    if (activeTab === 'MATRIX') {
-        setMatrixCatActQuery('');
-        setMatrixFilterArea('ALL');
-        setMatrixFilterCategory('ALL');
-        setMatrixFilterStatus('ALL');
-    } else {
-        setCatActQuery('');
-        setFilterArea('ALL');
-        setFilterCategory('ALL');
-    }
+    setCatActQuery('');
+    setFilterArea('ALL');
+    setFilterCategory('ALL');
+    setMatrixCatActQuery('');
   };
 
   const toggleCompletePending = async (itemId) => {
@@ -468,7 +475,7 @@ export default function ActivityTimelineView() {
         setStudentsByTcId(studentMap);
         setStudentsList(studentsSorted);
 
-        // Classrooms (Exclude KG TEST)
+        // Classrooms
         const { data: clsData, error: clsErr } = await supabase
           .from('classrooms')
           .select('id, name')
@@ -478,40 +485,14 @@ export default function ActivityTimelineView() {
             setClassrooms(clsData.filter(c => !c.name.toUpperCase().includes('KG TEST')));
         }
 
-        // 30-Day Timeline Data
-        const since = daysAgoISO(30);
-        const [resEnriched14, resRaw14] = await Promise.all([
-          supabase.from('vw_tc_observations_enriched').select('*').gte('observation_date', since).order('observation_date', { ascending: false }),
-          supabase.from('vw_tc_observations_expanded').select('tc_observation_id, html_content, text_content').gte('observation_date', since)
-        ]);
-
-        if (!resEnriched14.error && !resRaw14.error) {
-            const rawMap = new Map();
-            (resRaw14.data || []).forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
-
-            const processed14 = [];
-            (resEnriched14.data || []).forEach(tc => {
-              const id = tc.tc_observation_id || tc.id;
-              const raw = rawMap.get(String(id)) || {};
-              const actName = extractLessonName({ html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name });
-              
-              const names = actName ? actName.split('•').map(s => s.trim()).filter(Boolean) : [tc.activity_name || 'Activity'];
-              names.forEach(name => {
-                processed14.push({ ...tc, activity_name: name, bucket: tc.bucket || inferBucket(tc.note || raw.text_content), raw_html: raw.html_content });
-              });
-            });
-            setRows(processed14);
-        }
-
-        // Full Matrix Data (All-Time without Date restrictions to ensure complete historical accuracy)
+        // Fetch everything to enable fast local date toggling
         const matrixRes = await supabase
             .from('vw_tc_observations_enriched')
             .select('*')
-            .order('observation_date', { ascending: true })
+            .order('observation_date', { ascending: false })
             .limit(100000); 
 
         if (matrixRes.data) {
-            // Need raw text to infer missing buckets or extract merged HTML activities
             const rawMatrixRes = await supabase.from('vw_tc_observations_expanded').select('tc_observation_id, html_content, text_content').limit(100000);
             const rawMatrixMap = new Map();
             if (rawMatrixRes.data) {
@@ -528,7 +509,9 @@ export default function ActivityTimelineView() {
                     procMatrix.push({
                         ...tc,
                         activity_name: name,
-                        bucket: tc.bucket || inferBucket(tc.note || raw.text_content)
+                        bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
+                        raw_html: raw.html_content,
+                        raw_text: raw.text_content
                     });
                 });
             });
@@ -568,13 +551,47 @@ export default function ActivityTimelineView() {
 
   /**
    * =========================
+   * String-Based Date Filtering Logic
+   * =========================
+   */
+  const dateFilteredData = useMemo(() => {
+      let startD = new Date(activeDate);
+      let endD = new Date(activeDate);
+      
+      if (timeFrame === 'DAY') {
+          // Both are same day
+      } else if (timeFrame === '14_DAYS') {
+          startD.setDate(startD.getDate() - 13);
+      } else { // MONTH
+          startD.setDate(1);
+          endD.setMonth(endD.getMonth() + 1);
+          endD.setDate(0); // Last day
+      }
+
+      const startStr = toLocalISODate(startD);
+      const endStr = toLocalISODate(endD);
+
+      return fullMatrixData.filter(r => {
+          if (!r.observation_date) return false;
+          // observation_date comes in as YYYY-MM-DD from supabase view
+          const obsStr = String(r.observation_date).slice(0, 10);
+          return obsStr >= startStr && obsStr <= endStr;
+      });
+  }, [fullMatrixData, activeDate, timeFrame]);
+
+  const activeDataSource = activeTab === 'TIMELINE' ? dateFilteredData : fullMatrixData;
+  const uniqueAreas = useMemo(() => [...new Set(activeDataSource.map(r => translate(r.area_name || 'General')))].sort(), [activeDataSource, isTranslating]);
+  const uniqueCategories = useMemo(() => [...new Set(activeDataSource.filter(r => filterArea === 'ALL' || translate(r.area_name || 'General') === filterArea).map(r => translate(r.category_name || 'Uncategorized')))].sort(), [activeDataSource, filterArea, isTranslating]);
+
+  /**
+   * =========================
    * Kanban Data (Timeline Tab)
    * =========================
    */
   const kanbanItems = useMemo(() => {
       const q = catActQuery.trim().toLowerCase();
       
-      const filtered = rows.filter(r => {
+      const filtered = dateFilteredData.filter(r => {
           const areaName = translate(r.area_name || 'General');
           const categoryName = translate(r.category_name || 'Uncategorized');
           const activityName = translate(r.activity_name || 'Untitled Activity');
@@ -616,7 +633,7 @@ export default function ActivityTimelineView() {
           
           stus.forEach(s => {
               const currentMax = actGroup.studentsMap.get(s.tc_id)?.date;
-              if (!currentMax || new Date(r.observation_date) > new Date(currentMax)) {
+              if (!currentMax || String(r.observation_date).slice(0, 10) > String(currentMax).slice(0, 10)) {
                   actGroup.studentsMap.set(s.tc_id, { name: s.name, date: r.observation_date, tc_id: s.tc_id });
               }
           });
@@ -624,13 +641,10 @@ export default function ActivityTimelineView() {
 
       return Array.from(activityMap.values()).map(ag => ({
           ...ag,
-          studentsList: Array.from(ag.studentsMap.values()).sort((a,b) => new Date(b.date) - new Date(a.date))
+          studentsList: Array.from(ag.studentsMap.values()).sort((a,b) => String(b.date).localeCompare(String(a.date)))
       }));
       
-  }, [rows, filterClassroomId, selectedStudentTcId, filterArea, filterCategory, catActQuery, isTranslating, studentsByTcId]);
-
-  const uniqueAreas = useMemo(() => [...new Set((rows || []).map(r => translate(r.area_name || 'General')))].sort(), [rows, isTranslating]);
-  const uniqueCategories = useMemo(() => [...new Set((rows || []).filter(r => filterArea === 'ALL' || translate(r.area_name || 'General') === filterArea).map(r => translate(r.category_name || 'Uncategorized')))].sort(), [rows, filterArea, isTranslating]);
+  }, [dateFilteredData, filterClassroomId, selectedStudentTcId, filterArea, filterCategory, catActQuery, isTranslating, studentsByTcId]);
 
   const cols = {
     I: kanbanItems.filter(t => t.bucket === 'INTRODUCED'),
@@ -644,10 +658,11 @@ export default function ActivityTimelineView() {
    * =========================
    */
   const combinedFollowUps = useMemo(() => {
+      const q = catActQuery.trim().toLowerCase();
       const list = [];
       const obsMap = new Map(); // Prevent duplicate lessons for same observation
       
-      (rows || []).forEach(r => {
+      (fullMatrixData || []).forEach(r => {
           const obsId = String(r.tc_observation_id || r.id);
           const bucket = r.bucket;
           const noteLower = String(r.note || '').toLowerCase();
@@ -660,6 +675,10 @@ export default function ActivityTimelineView() {
                   const areaName = translate(r.area_name || 'General');
                   const categoryName = translate(r.category_name || 'Uncategorized');
                   const activityName = translate(r.activity_name || 'Untitled Activity');
+
+                  if (filterArea !== 'ALL' && areaName !== filterArea) return;
+                  if (filterCategory !== 'ALL' && categoryName !== filterCategory) return;
+                  if (q && !categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return;
                   
                   let peersList = [];
                   if (r.raw_html) {
@@ -668,11 +687,6 @@ export default function ActivityTimelineView() {
                   }
 
                   const cleanedNote = cleanNoteCoordinator(r.note, peersList.map(name => ({name})), activityName);
-
-                  const q = catActQuery.trim().toLowerCase();
-                  if (q) {
-                      if (!categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return;
-                  }
 
                   obsMap.set(obsId, {
                       id: `tc-${obsId}`,
@@ -704,8 +718,8 @@ export default function ActivityTimelineView() {
           }
       });
       
-      return Array.from(obsMap.values()).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [rows, filterClassroomId, selectedStudentTcId, catActQuery, isTranslating, studentsByTcId, resolvedIds]); 
+      return Array.from(obsMap.values()).sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  }, [fullMatrixData, filterClassroomId, selectedStudentTcId, catActQuery, filterArea, filterCategory, isTranslating, studentsByTcId, resolvedIds]); 
 
   const pendingByArea = useMemo(() => {
       const grouped = combinedFollowUps.reduce((acc, item) => {
@@ -719,7 +733,68 @@ export default function ActivityTimelineView() {
       }));
   }, [combinedFollowUps]);
 
+  /**
+   * =========================
+   * Overview Stats (Action Items)
+   * =========================
+   */
+  const overviewStats = useMemo(() => {
+      const today = new Date();
+      const todayStr = toLocalISODate(today);
 
+      const startOfWeek = new Date(today);
+      const day = startOfWeek.getDay();
+      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+      startOfWeek.setDate(diff);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(endOfWeek.getDate() + 6);
+
+      const startWeekStr = toLocalISODate(startOfWeek);
+      const endWeekStr = toLocalISODate(endOfWeek);
+
+      let todayCount = 0;
+      let weekCount = 0;
+
+      fullMatrixData.forEach(r => {
+          const obsStr = r.observation_date ? String(r.observation_date).slice(0, 10) : '';
+          if (!obsStr) return;
+          
+          if (obsStr === todayStr) todayCount++;
+          if (obsStr >= startWeekStr && obsStr <= endWeekStr) weekCount++;
+      });
+
+      const totalPending = combinedFollowUps.filter(f => !f.done).length;
+
+      return { todayCount, weekCount, totalPending };
+  }, [fullMatrixData, combinedFollowUps]);
+
+  // Handle Date Navigation
+  const handlePrevDate = () => {
+    const d = new Date(activeDate);
+    if (timeFrame === 'DAY') d.setDate(d.getDate() - 1);
+    else if (timeFrame === '14_DAYS') d.setDate(d.getDate() - 14);
+    else { d.setDate(1); d.setMonth(d.getMonth() - 1); }
+    setActiveDate(d);
+  };
+
+  const handleNextDate = () => {
+    const d = new Date(activeDate);
+    if (timeFrame === 'DAY') d.setDate(d.getDate() + 1);
+    else if (timeFrame === '14_DAYS') d.setDate(d.getDate() + 14);
+    else { d.setDate(1); d.setMonth(d.getMonth() + 1); }
+    setActiveDate(d);
+  };
+
+  let dateLabel = '';
+  if (timeFrame === 'DAY') {
+    dateLabel = formatShortDateStr(toLocalISODate(activeDate));
+  } else if (timeFrame === '14_DAYS') {
+    const startD = new Date(activeDate);
+    startD.setDate(startD.getDate() - 13);
+    dateLabel = `${formatShortDateStr(toLocalISODate(startD))} - ${formatShortDateStr(toLocalISODate(activeDate))}`;
+  } else {
+    dateLabel = activeDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  }
 
   /**
    * =========================
@@ -852,9 +927,27 @@ export default function ActivityTimelineView() {
                 Coordinator Dashboard 
                 {loading && <div style={{ fontSize: 12, fontWeight: 500, color: UI.accentYellow, fontFamily: THEME.sansFont }}>Syncing Data...</div>}
               </div>
-              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-                <ViewTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Recent Activity (14 Days)" onClick={() => setActiveTab('TIMELINE')} />
+              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                <ViewTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity Timeline" onClick={() => setActiveTab('TIMELINE')} />
                 <ViewTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" onClick={() => setActiveTab('PENDING')} />
+                
+                {activeTab === 'TIMELINE' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}`, marginLeft: 16 }}>
+                        <select value={timeFrame} onChange={e => setTimeFrame(e.target.value)} style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}>
+                            <option value="DAY">Day</option>
+                            <option value="14_DAYS">14 Days</option>
+                            <option value="MONTH">Month</option>
+                        </select>
+                        <div style={{ width: 1, height: 16, background: UI.border }} />
+                        <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}><ChevronLeft size={16}/></button>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+                            {dateLabel}
+                        </span>
+                        <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}><ChevronRight size={16}/></button>
+                        <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
+                        <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>Today</button>
+                    </div>
+                )}
               </div>
             </div>
 
@@ -911,111 +1004,119 @@ export default function ActivityTimelineView() {
       {/* Main Content */}
       <div style={{ padding: '0 24px 30px' }}>
         
-        {/* TIMELINE TAB */}
-        {activeTab === 'TIMELINE' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            {/* Kanban Board */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: '#fff', padding: '12px 20px', border: `1px solid ${UI.border}`, borderRadius: R }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.muted, fontSize: 13, fontWeight: 600 }}><Filter size={14}/> Filters:</div>
-                <Field as="select" value={filterArea} onChange={e => { setFilterArea(e.target.value); setFilterCategory('ALL'); }} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
-                  <option value="ALL">All Areas</option>
-                  {uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
-                </Field>
-                <Field as="select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
-                  <option value="ALL">All Categories</option>
-                  {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                </Field>
-                
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* SHARED FILTER BAR */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: '#fff', padding: '12px 20px', border: `1px solid ${UI.border}`, borderRadius: R, marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.muted, fontSize: 13, fontWeight: 600 }}><Filter size={14}/> Filters:</div>
+            <Field as="select" value={filterArea} onChange={e => { setFilterArea(e.target.value); setFilterCategory('ALL'); }} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
+              <option value="ALL">All Areas</option>
+              {uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
+            </Field>
+            <Field as="select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
+              <option value="ALL">All Categories</option>
+              {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            </Field>
+            
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+              {activeTab === 'TIMELINE' && (
                   <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 32, fontSize: 12, border: `1px solid ${UI.border}` }}>
                      {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
                      {expandAll ? 'Collapse All' : 'Expand All'}
                   </Button>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10 }}>
-                <KanbanColumn title="Introduced" color="#1E88E5" count={cols.I.length} items={cols.I} forceExpandAll={expandAll} />
-                <KanbanColumn title="Practiced" color="#F5B041" count={cols.P.length} items={cols.P} forceExpandAll={expandAll} />
-                <KanbanColumn title="Needs Review" color="#E53935" count={cols.N.length} items={cols.N} forceExpandAll={expandAll} />
-              </div>
+              )}
+              {activeTab === 'PENDING' && (
+                  <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 32, fontSize: 12, border: `1px solid ${UI.border}` }}>
+                      {hideCompleted ? 'Show resolved' : 'Hide resolved'}
+                  </Button>
+              )}
             </div>
+        </div>
+
+        {/* TIMELINE TAB */}
+        {activeTab === 'TIMELINE' && (
+          <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10 }}>
+            <KanbanColumn title="Introduced" color="#1E88E5" count={cols.I.length} items={cols.I} forceExpandAll={expandAll} />
+            <KanbanColumn title="Practiced" color="#F5B041" count={cols.P.length} items={cols.P} forceExpandAll={expandAll} />
+            <KanbanColumn title="Needs Review" color="#E53935" count={cols.N.length} items={cols.N} forceExpandAll={expandAll} />
           </div>
         )}
 
         {/* FOLLOW-UP ITEMS TAB */}
         {activeTab === 'PENDING' && (
-          <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '24px 24px 16px' }}>
-                  <SectionHeader icon={Target} title="Action Items" right={
-                      <div style={{ display: 'flex', gap: 10 }}>
-                          <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 32, fontSize: 12, border: `1px solid ${UI.border}` }}>{hideCompleted ? 'Show resolved' : 'Hide resolved'}</Button>
-                      </div>
-                  } />
-              </div>
-              
-              {hideCompleted && combinedFollowUps.filter(f => !f.done).length === 0 ? (<div style={{ padding: '0 24px 32px', fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No action items found.</div>) : (
-                <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 16, paddingLeft: 24, paddingRight: 24, gap: 32 }}>
-                   {pendingByArea.map((grp) => {
-                       const ss = getSubjectStyle(grp.areaName);
-                       const rowsVisible = grp.items.map(it => {
-                           const isDone = resolvedIds.has(it.id); 
-                           if (hideCompleted && isDone) return null;
-                           return { ...it, _done: isDone };
-                       }).filter(Boolean);
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            
+            {/* Action Items Overview */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+                <StatCard title="Today's Activity" count={overviewStats.todayCount} icon={Clock} color={UI.primary} />
+                <StatCard title="This Week's Activity" count={overviewStats.weekCount} icon={CalendarDays} color={UI.primary} />
+                <StatCard title="Total Pending Actions" count={overviewStats.totalPending} icon={AlertCircle} color={UI.danger} />
+            </div>
 
-                       if (rowsVisible.length === 0) return null;
-
-                       return (
-                           <div key={grp.areaName} style={{ display: 'flex', flexDirection: 'column' }}>
-                               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                                   <div style={{ width: 12, height: 12, borderRadius: 2, background: ss.accent || UI.primary }} />
-                                   <div style={{ fontSize: 14, fontWeight: 700, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{grp.areaName}</div>
-                                   <div style={{ flex: 1, height: 1, background: rgba(UI.border, 0.8) }} />
-                               </div>
-
-                               <div className="ss-hide-scroll" style={{ overflowX: 'auto', border: `1px solid ${UI.border}`, borderRadius: R }}>
-                                   <div style={{ minWidth: 900, display: 'grid', gridTemplateColumns: '50px minmax(250px,2fr) minmax(300px,2fr) 100px', gap: 16, padding: '10px 16px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}` }}>
-                                       <Label>Done</Label><Label>Activity Detail</Label><Label>Students & Classrooms</Label><Label>Date Logged</Label>
-                                   </div>
-                                   {rowsVisible.map((it, idx) => {
-                                       return (
-                                           <div key={`${it.id}-${idx}`} style={{ display: 'grid', gridTemplateColumns: '50px minmax(250px,2fr) minmax(300px,2fr) 100px', gap: 16, alignItems: 'center', background: '#fff', padding: '14px 16px', borderBottom: idx === rowsVisible.length - 1 ? 'none' : `1px solid ${UI.border}`, opacity: it._done ? 0.6 : 1, transition: 'opacity 0.2s' }}>
-                                               <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                   <button onClick={() => toggleCompletePending(it.id)} style={{ width: 22, height: 22, borderRadius: 4, cursor: 'pointer', border: `1.5px solid ${it._done ? rgba(UI.primary, 0.6) : rgba(UI.primary, 0.3)}`, background: it._done ? rgba(UI.primary, 0.1) : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
-                                                       {it._done ? <Check size={14} color={UI.primary} strokeWidth={3} /> : null}
-                                                   </button>
-                                               </div>
-                                               <div>
-                                                   <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, textDecoration: it._done ? 'line-through' : 'none' }}>{it.detail}</div>
-                                                   {it.note && <div style={{ marginTop: 6, fontSize: 11, fontWeight: 500, color: UI.muted, fontStyle: 'italic', lineHeight: 1.3 }}>"{it.note}"</div>}
-                                               </div>
-                                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                                 {it.studentsList.map(s => {
-                                                     const className = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
-                                                     return (
-                                                        <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 4, border: `1px solid ${UI.border}`, background: '#f8fafc' }}>
-                                                            <User size={12} color={UI.primary}/>
-                                                            <span style={{ fontSize: 11, fontWeight: 600, color: UI.text }}>{s.name}</span>
-                                                            <span style={{ fontSize: 10, color: UI.muted, background: '#e2e8f0', padding: '1px 4px', borderRadius: 2 }}>{className}</span>
-                                                        </div>
-                                                     )
-                                                 })}
-                                               </div>
-                                               <div style={{ fontSize: 11, fontWeight: 500, color: UI.muted }}>{it.date ? formatShortDateStr(it.date) : '—'}</div>
-                                           </div>
-                                       );
-                                   })}
-                               </div>
-                           </div>
-                       );
-                   })}
+            <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '24px 24px 16px' }}>
+                    <SectionHeader icon={Target} title="Action Items Listing" />
                 </div>
-              )}
-          </ThemedCard>
-        )}
+                
+                {hideCompleted && combinedFollowUps.filter(f => !f.done).length === 0 ? (<div style={{ padding: '0 24px 32px', fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>No action items found matching criteria.</div>) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 16, paddingLeft: 24, paddingRight: 24, gap: 32 }}>
+                     {pendingByArea.map((grp) => {
+                         const ss = getSubjectStyle(grp.areaName);
+                         const rowsVisible = grp.items.map(it => {
+                             const isDone = resolvedIds.has(it.id); 
+                             if (hideCompleted && isDone) return null;
+                             return { ...it, _done: isDone };
+                         }).filter(Boolean);
 
+                         if (rowsVisible.length === 0) return null;
+
+                         return (
+                             <div key={grp.areaName} style={{ display: 'flex', flexDirection: 'column' }}>
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                                     <div style={{ width: 12, height: 12, borderRadius: 2, background: ss.accent || UI.primary }} />
+                                     <div style={{ fontSize: 14, fontWeight: 700, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{grp.areaName}</div>
+                                     <div style={{ flex: 1, height: 1, background: rgba(UI.border, 0.8) }} />
+                                 </div>
+
+                                 <div className="ss-hide-scroll" style={{ overflowX: 'auto', border: `1px solid ${UI.border}`, borderRadius: R }}>
+                                     <div style={{ minWidth: 900, display: 'grid', gridTemplateColumns: '50px minmax(250px,2fr) minmax(300px,2fr) 100px', gap: 16, padding: '10px 16px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}` }}>
+                                         <Label>Done</Label><Label>Activity Detail</Label><Label>Students & Classrooms</Label><Label>Date Logged</Label>
+                                     </div>
+                                     {rowsVisible.map((it, idx) => {
+                                         return (
+                                             <div key={`${it.id}-${idx}`} style={{ display: 'grid', gridTemplateColumns: '50px minmax(250px,2fr) minmax(300px,2fr) 100px', gap: 16, alignItems: 'center', background: '#fff', padding: '14px 16px', borderBottom: idx === rowsVisible.length - 1 ? 'none' : `1px solid ${UI.border}`, opacity: it._done ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                     <button onClick={() => toggleCompletePending(it.id)} style={{ width: 22, height: 22, borderRadius: 4, cursor: 'pointer', border: `1.5px solid ${it._done ? rgba(UI.primary, 0.6) : rgba(UI.primary, 0.3)}`, background: it._done ? rgba(UI.primary, 0.1) : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+                                                         {it._done ? <Check size={14} color={UI.primary} strokeWidth={3} /> : null}
+                                                     </button>
+                                                 </div>
+                                                 <div>
+                                                     <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, textDecoration: it._done ? 'line-through' : 'none' }}>{it.detail}</div>
+                                                     {it.note && <div style={{ marginTop: 6, fontSize: 11, fontWeight: 500, color: UI.muted, fontStyle: 'italic', lineHeight: 1.3 }}>"{it.note}"</div>}
+                                                 </div>
+                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                   {it.studentsList.map(s => {
+                                                       const className = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
+                                                       return (
+                                                          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 4, border: `1px solid ${UI.border}`, background: '#f8fafc' }}>
+                                                              <User size={12} color={UI.primary}/>
+                                                              <span style={{ fontSize: 11, fontWeight: 600, color: UI.text }}>{s.name}</span>
+                                                              <span style={{ fontSize: 10, color: UI.muted, background: '#e2e8f0', padding: '1px 4px', borderRadius: 2 }}>{className}</span>
+                                                          </div>
+                                                       )
+                                                   })}
+                                                 </div>
+                                                 <div style={{ fontSize: 11, fontWeight: 500, color: UI.muted }}>{it.date ? formatShortDateStr(it.date) : '—'}</div>
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                             </div>
+                         );
+                     })}
+                  </div>
+                )}
+            </ThemedCard>
+          </div>
+        )}
 
       </div>
     </div>
