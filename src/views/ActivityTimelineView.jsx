@@ -287,6 +287,73 @@ const ViewToggle = ({ active, icon: Icon, label, onClick }) => (
   </button>
 );
 
+const DateRangeControl = ({ timeFrame, onTimeFrameChange, onPrev, onNext, onToday, dateLabel, showToday = true }) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      background: '#fff',
+      padding: '4px',
+      borderRadius: R,
+      border: `1px solid ${UI.border}`,
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end',
+      maxWidth: '100%',
+    }}
+  >
+    <select
+      value={timeFrame}
+      onChange={(e) => onTimeFrameChange(e.target.value)}
+      style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13, minWidth: 110 }}
+    >
+      <option value="DAY">Today</option>
+      <option value="WEEK">Week</option>
+      <option value="14_DAYS">Last 14 Days</option>
+      <option value="MONTH">Month</option>
+    </select>
+    <div style={{ width: 1, height: 16, background: UI.border }} />
+    <button onClick={onPrev} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+      <ChevronLeft size={16}/>
+    </button>
+    <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+      {dateLabel}
+    </span>
+    <button onClick={onNext} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+      <ChevronRight size={16}/>
+    </button>
+    {showToday ? (
+      <>
+        <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
+        <button onClick={onToday} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
+          Today
+        </button>
+      </>
+    ) : null}
+  </div>
+);
+
+const SubtabHeader = ({ icon: Icon, title, primaryControls, secondaryControls }) => (
+  <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700, minHeight: 36 }}>
+        <Icon size={16} />
+        {title}
+      </div>
+      {secondaryControls ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
+          {secondaryControls}
+        </div>
+      ) : null}
+    </div>
+    {primaryControls ? (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+        {primaryControls}
+      </div>
+    ) : null}
+  </ThemedCard>
+);
+
 const StatCard = ({ title, count, icon: Icon, color }) => (
     <div style={{ background: '#fff', borderRadius: R, padding: '16px 20px', border: `1px solid ${UI.border}`, borderLeft: `4px solid ${color}`, display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
         <div style={{ background: rgba(color, 0.1), padding: 12, borderRadius: '50%' }}>
@@ -1069,9 +1136,9 @@ if (timeFrame === 'DAY') {
         {total === 0 ? (
           <div style={{ fontSize: 12, color: UI.muted }}>No data in this range.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 18, alignItems: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <svg width="160" height="160" viewBox="0 0 160 160" aria-label={title}>
+          <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 18, alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: '0 0 160px', minWidth: 160 }}>
+              <svg width="160" height="160" viewBox="0 0 160 160" aria-label={title} style={{ display: 'block', maxWidth: '100%', flexShrink: 0 }}>
                 <g transform="translate(80,80) rotate(-90)">
                   <circle r={radius} fill="none" stroke="#EDF2F7" strokeWidth="24" />
                   {filteredSegments.map((segment) => {
@@ -1097,11 +1164,11 @@ if (timeFrame === 'DAY') {
               </svg>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: '1 1 auto', minWidth: 0 }}>
               {filteredSegments.map((segment) => (
                 <div key={segment.label} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) auto', gap: 10, alignItems: 'center' }}>
                   <div style={{ width: 12, height: 12, background: segment.color }} />
-                  <div style={{ fontSize: 11, fontWeight: 500, color: UI.text }}>{segment.label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: UI.text, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{segment.label}</div>
                   <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary }}>{segment.value}</div>
                 </div>
               ))}
@@ -1135,7 +1202,7 @@ if (timeFrame === 'DAY') {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <ClassTab
             active={filterClassroomId === 'ALL'}
-            label="All Classrooms"
+            label="All"
             onClick={() => {
               setFilterClassroomId('ALL');
               setSelectedStudentTcId(null);
@@ -1246,133 +1313,71 @@ if (timeFrame === 'DAY') {
 
           <div>
         {activeTab === 'TIMELINE' && (
-          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
-                  <History size={16} />
-                  Activity Timeline
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
-                  <select
-                    value={timeFrame}
-                    onChange={(e) => setTimeFrame(e.target.value)}
-                    style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
-                  >
-                    <option value="DAY">Today</option>
-                    <option value="WEEK">Week</option>
-                    <option value="14_DAYS">Last 14 Days</option>
-                    <option value="MONTH">Month</option>
-                  </select>
-                  <div style={{ width: 1, height: 16, background: UI.border }} />
-                  <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                    <ChevronLeft size={16}/>
-                  </button>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
-                    {dateLabel}
-                  </span>
-                  <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                    <ChevronRight size={16}/>
-                  </button>
-                  <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
-                  <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
-                    Today
-                  </button>
-                </div>
-
+          <SubtabHeader
+            icon={History}
+            title="Activity Timeline"
+            primaryControls={(
+              <DateRangeControl
+                timeFrame={timeFrame}
+                onTimeFrameChange={setTimeFrame}
+                onPrev={handlePrevDate}
+                onNext={handleNextDate}
+                onToday={() => setActiveDate(new Date())}
+                dateLabel={dateLabel}
+              />
+            )}
+            secondaryControls={(
+              <>
                 <div style={{ display: 'flex', background: '#f8fafc', padding: 4, borderRadius: R, border: `1px solid ${UI.border}` }}>
                   <ViewToggle active={timelineFormat === 'KANBAN'} icon={Columns} label="Board View" onClick={() => setTimelineFormat('KANBAN')} />
                   <ViewToggle active={timelineFormat === 'LIST'} icon={List} label="List View" onClick={() => setTimelineFormat('LIST')} />
                 </div>
-
                 <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
                   {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
                   {expandAll ? 'Collapse All' : 'Expand All'}
                 </Button>
-              </div>
-            </div>
-          </ThemedCard>
+              </>
+            )}
+          />
         )}
 
         {activeTab === 'PENDING' && (
-          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
-                  <Target size={16} />
-                  Action Items
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
-                  <select
-                    value={timeFrame}
-                    onChange={(e) => setTimeFrame(e.target.value)}
-                    style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
-                  >
-                    <option value="DAY">Today</option>
-                    <option value="WEEK">Week</option>
-                    <option value="14_DAYS">Last 14 Days</option>
-                    <option value="MONTH">Month</option>
-                  </select>
-                  <div style={{ width: 1, height: 16, background: UI.border }} />
-                  <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                    <ChevronLeft size={16}/>
-                  </button>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
-                    {dateLabel}
-                  </span>
-                  <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                    <ChevronRight size={16}/>
-                  </button>
-                  <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
-                  <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
-                    Today
-                  </button>
-                </div>
-
-                <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
-                  {hideCompleted ? 'Show resolved' : 'Hide resolved'}
-                </Button>
-              </div>
-            </div>
-          </ThemedCard>
+          <SubtabHeader
+            icon={Target}
+            title="Action Items"
+            primaryControls={(
+              <DateRangeControl
+                timeFrame={timeFrame}
+                onTimeFrameChange={setTimeFrame}
+                onPrev={handlePrevDate}
+                onNext={handleNextDate}
+                onToday={() => setActiveDate(new Date())}
+                dateLabel={dateLabel}
+              />
+            )}
+            secondaryControls={(
+              <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
+                {hideCompleted ? 'Show resolved' : 'Hide resolved'}
+              </Button>
+            )}
+          />
         )}
 
         {activeTab === 'ANALYTICS' && (
-          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
-                <BarChart3 size={16} />
-                Analytics
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
-                <select
-                  value={timeFrame}
-                  onChange={(e) => setTimeFrame(e.target.value)}
-                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
-                >
-                  <option value="DAY">Today</option>
-                  <option value="WEEK">Week</option>
-                  <option value="14_DAYS">Last 14 Days</option>
-                  <option value="MONTH">Month</option>
-                </select>
-                <div style={{ width: 1, height: 16, background: UI.border }} />
-                <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                  <ChevronLeft size={16}/>
-                </button>
-                <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
-                  {dateLabel}
-                </span>
-                <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-                  <ChevronRight size={16}/>
-                </button>
-              </div>
-            </div>
-          </ThemedCard>
+          <SubtabHeader
+            icon={BarChart3}
+            title="Analytics"
+            primaryControls={(
+              <DateRangeControl
+                timeFrame={timeFrame}
+                onTimeFrameChange={setTimeFrame}
+                onPrev={handlePrevDate}
+                onNext={handleNextDate}
+                onToday={() => setActiveDate(new Date())}
+                dateLabel={dateLabel}
+              />
+            )}
+          />
         )}
 
         {/* TIMELINE TAB */}
@@ -1495,10 +1500,10 @@ if (timeFrame === 'DAY') {
               <AnalyticsPieCard
                 title="Status Breakdown"
                 segments={[
-                  { label: 'Introduced', value: analyticsSummary.status.INTRODUCED, color: '#1E88E5' },
-                  { label: 'Practiced', value: analyticsSummary.status.PRACTICED, color: '#F5B041' },
-                  { label: 'Needs Review', value: analyticsSummary.status.REWORK, color: '#E53935' },
-                  { label: 'Mastered', value: analyticsSummary.status.MASTERED, color: '#233876' },
+                  { label: 'I', value: analyticsSummary.status.INTRODUCED, color: '#1E88E5' },
+                  { label: 'P', value: analyticsSummary.status.PRACTICED, color: '#F5B041' },
+                  { label: 'R', value: analyticsSummary.status.REWORK, color: '#E53935' },
+                  { label: 'M', value: analyticsSummary.status.MASTERED, color: '#233876' },
                 ]}
               />
               <AnalyticsBarList title="Most Worked Areas" items={analyticsSummary.topAreas} color={UI.primary} />
