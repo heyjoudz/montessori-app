@@ -7,6 +7,7 @@ import { safeDate, getNormalizedItem } from '../utils/helpers';
 import {
   LayoutList,
   ListTodo,
+  BarChart3,
   BookOpen,
   Clock,
   AlertCircle,
@@ -22,7 +23,9 @@ import {
   Filter,
   Target,
   History,
-  CalendarDays
+  CalendarDays,
+  List,
+  Columns
 } from 'lucide-react';
 
 /**
@@ -96,12 +99,13 @@ const getWeekRangeMonSun = (anchorDate) => {
   return { start, end };
 };
 
-const getRawFirstTitle = (it) => 
-  clean(it?.raw_activity) || 
-  clean(it?.activity) || 
-  clean(getNormalizedItem(it || {})?.rawActivity) || 
-  clean(getNormalizedItem(it || {})?.title) || 
-  'Untitled Activity';
+const splitActivityNames = (value, fallback = 'Activity') => {
+  const names = String(value || '')
+    .split('•')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return names.length ? names : [fallback];
+};
 
 const applyTranslations = (text) => {
   if (!text) return text;
@@ -138,58 +142,18 @@ const inferBucket = (text) => {
 };
 
 const extractLessonName = (rec) => {
-  const html = rec.html_content || '';
-  const text = rec.text_content || rec.note || '';
-
-  const normalize = (s) =>
-    String(s || '')
-      .replace(/\s+/g, ' ')
-      .replace(/\u00A0/g, ' ')
-      .trim();
-
-  const unique = (arr) => [...new Set((arr || []).map(normalize).filter(Boolean))];
-
-  // 1) Prefer HTML extraction (most reliable)
-  if (html) {
-    try {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-
-      // TC can use different anchor classes/structures, so we grab broadly
-      const anchors = Array.from(doc.querySelectorAll('a'));
-
-      const lessonTexts = anchors
-        .filter((a) => {
-          const href = (a.getAttribute('href') || '').toLowerCase();
-          const cls = (a.getAttribute('class') || '').toLowerCase();
-          // keep lesson links (class-based OR url-based)
-          return cls.includes('lesson') || href.includes('lesson');
-        })
-        .map((a) => a.textContent)
-        .map(normalize)
-        .filter(Boolean);
-
-      const lessons = unique(lessonTexts);
-      if (lessons.length > 0) return lessons.join(' • ');
-    } catch (e) {
-      // ignore and fallback
+    const html = rec.html_content || '';
+    if (html) {
+        try {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const lessons = Array.from(doc.querySelectorAll('a.lesson-link')).map(a => a.textContent.trim());
+            if (lessons.length > 0) return lessons.join(' • ');
+        } catch(e) {}
     }
-  }
-
-  // 2) Fallback: if activity_name already has multiple lessons joined
-  if (rec.activity_name) return rec.activity_name;
-
-  // 3) Fallback: parse text_content for common separators
-  const t = normalize(text);
-  if (t.includes('•')) {
-    const parts = unique(t.split('•'));
-    if (parts.length > 0) return parts.join(' • ');
-  }
-
-  // 4) Last resort: regex
-  const m = t.match(
-    /(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i
-  );
-  return m ? normalize(m[1]) : 'General Activity';
+    if (rec.activity_name) return rec.activity_name;
+    const textToSearch = rec.note || rec.text_content || html.replace(/<[^>]+>/g, '');
+    const textMatch = textToSearch.match(/(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i);
+    return textMatch ? textMatch[1].trim() : 'General Activity';
 };
 
 const cleanNoteCoordinator = (note, studentsList, activityName) => {
@@ -291,14 +255,46 @@ const ViewTab = ({ active, icon: Icon, label, onClick }) => (
   </button>
 );
 
+const SideNavTab = ({ active, icon: Icon, label, meta, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      width: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      padding: '14px 14px',
+      borderRadius: R,
+      border: active ? `1px solid ${UI.primary}` : `1px solid ${UI.border}`,
+      background: active ? rgba(UI.primary, 0.08) : '#fff',
+      color: active ? UI.primary : UI.text,
+      cursor: 'pointer',
+      textAlign: 'left'
+    }}
+  >
+    <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+      {Icon ? <Icon size={16} color={active ? UI.primary : UI.muted} /> : null}
+      <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+    </span>
+    {meta != null ? <span style={{ fontSize: 11, fontWeight: 700, color: active ? UI.primary : UI.muted }}>{meta}</span> : null}
+  </button>
+);
+
+const ViewToggle = ({ active, icon: Icon, label, onClick }) => (
+  <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: R, border: `1px solid ${active ? UI.primary : 'transparent'}`, background: active ? UI.primary : 'transparent', color: active ? '#fff' : UI.muted, fontSize: 13, fontWeight: active ? 600 : 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none', height: '36px' }}>
+    {Icon ? <Icon size={16} color={active ? '#fff' : UI.muted} /> : null} {label}
+  </button>
+);
+
 const StatCard = ({ title, count, icon: Icon, color }) => (
     <div style={{ background: '#fff', borderRadius: R, padding: '16px 20px', border: `1px solid ${UI.border}`, borderLeft: `4px solid ${color}`, display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
         <div style={{ background: rgba(color, 0.1), padding: 12, borderRadius: '50%' }}>
             <Icon size={20} color={color} />
         </div>
         <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: UI.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: UI.text, marginTop: 4 }}>{count}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: UI.muted, textTransform: 'uppercase', letterSpacing: 0.35 }}>{title}</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: UI.text, marginTop: 4 }}>{count}</div>
         </div>
     </div>
 );
@@ -374,6 +370,31 @@ const StatusCountBadge = ({ status, count }) => {
   );
 };
 
+const StatusLabelBadge = ({ status }) => {
+  const config = {
+    'INTRODUCED': { bg: '#EFF6FF', color: '#1E88E5', label: 'Introduced', border: '#BFDBFE' },
+    'PRACTICED': { bg: '#FFFBEB', color: '#B7791F', label: 'Practiced', border: '#FDE68A' },
+    'MASTERED': { bg: '#F8FAFC', color: '#233876', label: 'Mastered', border: '#E2E8F0' },
+    'REWORK': { bg: '#FEF2F2', color: '#E53935', label: 'Needs Review', border: '#FECACA' }
+  };
+  const c = config[String(status || '').toUpperCase()];
+  if (!c) return null;
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 108, background: c.bg, color: c.color, padding: '5px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700, border: `1px solid ${c.border}`, whiteSpace: 'nowrap' }}>
+      {c.label}
+    </div>
+  );
+};
+
+const bucketToLabel = (bucket) => {
+  const value = String(bucket || '').toUpperCase();
+  if (value === 'INTRODUCED') return 'Introduced';
+  if (value === 'PRACTICED') return 'Practiced';
+  if (value === 'REWORK') return 'Needs Review';
+  if (value === 'MASTERED') return 'Mastered';
+  return value || 'Introduced';
+};
+
 const TreeItem = ({ label, level = 0, children, statusMap, visibleClassrooms, globalExpanded }) => {
   const [isExpanded, setIsExpanded] = useState(level === 0);
   const hasChildren = React.Children.count(children) > 0;
@@ -444,7 +465,7 @@ export default function ActivityTimelineView() {
   const [isTranslating, setIsTranslating] = useState(false);
 
   // Timeframe and Date filtering
-const [timeFrame, setTimeFrame] = useState('DAY'); // default: Today
+const [timeFrame, setTimeFrame] = useState('WEEK'); // default board view: Week
 const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
 
   // Data
@@ -464,18 +485,20 @@ const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
   // Tab States
   const [expandAll, setExpandAll] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false); 
-  const [matrixCatActQuery, setMatrixCatActQuery] = useState('');
+  const [timelineFormat, setTimelineFormat] = useState('KANBAN'); // 'KANBAN' or 'LIST'
+
+  // Add this near your state declarations
+useEffect(() => {
+  if (activeTab === 'PENDING') {
+    setTimeFrame('14_DAYS');
+    setActiveDate(clampToToday(new Date()));
+  } else if (activeTab === 'TIMELINE') {
+    setTimeFrame('WEEK');
+    setActiveDate(clampToToday(new Date()));
+  }
+}, [activeTab]);
 
   const translate = (s) => (isTranslating ? applyTranslations(s) : s);
-
-  const clearAllFilters = () => {
-    setStudentSearch('');
-    setSelectedStudentTcId(null);
-    setCatActQuery('');
-    setFilterArea('ALL');
-    setFilterCategory('ALL');
-    setMatrixCatActQuery('');
-  };
 
   const toggleCompletePending = async (itemId) => {
     const isResolved = resolvedIds.has(itemId);
@@ -553,28 +576,50 @@ const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
             .limit(100000); 
 
         if (matrixRes.data) {
-            const rawMatrixRes = await supabase.from('vw_tc_observations_expanded').select('tc_observation_id, html_content, text_content').limit(100000);
-            const rawMatrixMap = new Map();
-            if (rawMatrixRes.data) {
-                rawMatrixRes.data.forEach(r => { if(r.tc_observation_id) rawMatrixMap.set(String(r.tc_observation_id), r); });
+            const observationIds = [...new Set(
+              (matrixRes.data || [])
+                .map((tc) => tc.tc_observation_id || tc.id)
+                .filter(Boolean)
+            )];
+
+            const rawRows = [];
+            const chunkSize = 500;
+            for (let i = 0; i < observationIds.length; i += chunkSize) {
+              const chunk = observationIds.slice(i, i + chunkSize);
+              const rawChunkRes = await supabase
+                .from('vw_tc_observations_expanded')
+                .select('tc_observation_id, html_content, text_content')
+                .in('tc_observation_id', chunk);
+              if (rawChunkRes.error) throw rawChunkRes.error;
+              rawRows.push(...(rawChunkRes.data || []));
             }
 
-            const procMatrix = [];
-            matrixRes.data.forEach(tc => {
-                const raw = rawMatrixMap.get(String(tc.tc_observation_id || tc.id)) || {};
-                const actName = extractLessonName({
-  html_content: raw.html_content,
-  text_content: raw.text_content,
-  activity_name: tc.activity_name
-});
+            const rawMatrixMap = new Map();
+            rawRows.forEach(r => { if (r.tc_observation_id) rawMatrixMap.set(String(r.tc_observation_id), r); });
 
-procMatrix.push({
-  ...tc,
-  activity_name: actName || tc.activity_name || 'Activity',
-  bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
-  raw_html: raw.html_content,
-  raw_text: raw.text_content
-});
+            const procMatrix = [];
+            (matrixRes.data || []).forEach(tc => {
+                const id = tc.tc_observation_id || tc.id;
+                const raw = rawMatrixMap.get(String(id)) || {};
+                const actName = extractLessonName({
+                  html_content: raw.html_content,
+                  text_content: raw.text_content,
+                  activity_name: tc.activity_name
+                });
+
+                const names = actName
+                  ? actName.split('•').map(s => s.trim()).filter(Boolean)
+                  : [tc.activity_name || 'Activity'];
+
+                names.forEach(name => {
+                    procMatrix.push({
+                      ...tc,
+                      activity_name: name,
+                      bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
+                      raw_html: raw.html_content || '',
+                      raw_text: raw.text_content || ''
+                    });
+                });
             });
             setFullMatrixData(procMatrix);
         }
@@ -647,7 +692,7 @@ procMatrix.push({
   });
 }, [fullMatrixData, activeDate, timeFrame]);
 
-  const activeDataSource = activeTab === 'TIMELINE' ? dateFilteredData : fullMatrixData;
+  const activeDataSource = dateFilteredData;
   const uniqueAreas = useMemo(() => [...new Set(activeDataSource.map(r => translate(r.area_name || 'General')))].sort(), [activeDataSource, isTranslating]);
   const uniqueCategories = useMemo(() => [...new Set(activeDataSource.filter(r => filterArea === 'ALL' || translate(r.area_name || 'General') === filterArea).map(r => translate(r.category_name || 'Uncategorized')))].sort(), [activeDataSource, filterArea, isTranslating]);
 
@@ -804,6 +849,66 @@ if (actName && existing.detail && existing.detail !== actName) {
       }));
   }, [combinedFollowUps]);
 
+  const hiddenResolvedCount = useMemo(
+    () => combinedFollowUps.filter((item) => resolvedIds.has(item.id)).length,
+    [combinedFollowUps, resolvedIds]
+  );
+
+  const timelineSummary = useMemo(() => ({
+    introduced: cols.I.length,
+    practiced: cols.P.length,
+    review: cols.N.length,
+    total: cols.I.length + cols.P.length + cols.N.length,
+  }), [cols.I.length, cols.P.length, cols.N.length]);
+
+  const analyticsRows = useMemo(() => {
+    const q = catActQuery.trim().toLowerCase();
+    return (dateFilteredData || []).filter((r) => {
+      const areaName = translate(r.area_name || 'General');
+      const categoryName = translate(r.category_name || 'Uncategorized');
+      const activityName = translate(r.activity_name || 'Untitled Activity');
+
+      if (filterArea !== 'ALL' && areaName !== filterArea) return false;
+      if (filterCategory !== 'ALL' && categoryName !== filterCategory) return false;
+      if (q && !categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return false;
+
+      const stus = filterStudentRefs(r.child_tc_ids || [r.child_tc_id]);
+      return stus.length > 0;
+    });
+  }, [dateFilteredData, filterArea, filterCategory, catActQuery, selectedStudentTcId, filterClassroomId, isTranslating, studentsByTcId]);
+
+  const analyticsSummary = useMemo(() => {
+    const byArea = new Map();
+    const byActivity = new Map();
+    const byStudent = new Map();
+    const status = { INTRODUCED: 0, PRACTICED: 0, REWORK: 0, MASTERED: 0 };
+
+    analyticsRows.forEach((row) => {
+      const area = translate(row.area_name || 'General');
+      const activity = translate(row.activity_name || 'Untitled Activity');
+      const bucket = String(row.bucket || 'INTRODUCED').toUpperCase();
+      byArea.set(area, (byArea.get(area) || 0) + 1);
+      byActivity.set(activity, (byActivity.get(activity) || 0) + 1);
+      if (status[bucket] != null) status[bucket] += 1;
+
+      filterStudentRefs(row.child_tc_ids || [row.child_tc_id]).forEach((s) => {
+        byStudent.set(s.name, (byStudent.get(s.name) || 0) + 1);
+      });
+    });
+
+    const toTop = (map, limit = 6) => Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit)
+      .map(([label, count]) => ({ label, count }));
+
+    return {
+      topAreas: toTop(byArea),
+      topActivities: toTop(byActivity),
+      topStudents: toTop(byStudent),
+      status,
+    };
+  }, [analyticsRows, filterClassroomId, selectedStudentTcId, isTranslating, studentsByTcId]);
+
   /**
    * =========================
    * Overview Stats (Action Items)
@@ -902,7 +1007,7 @@ if (timeFrame === 'DAY') {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
                                   {areaItems.map(item => (
                                       <div key={item.id} style={{ background: '#fff', borderRadius: R, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                                          <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, lineHeight: 1.3 }}>{item.activity_name}</div>
+                                          <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, lineHeight: 1.3, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item.activity_name}</div>
                                           
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                               {item.studentsList.map(s => (
@@ -922,6 +1027,88 @@ if (timeFrame === 'DAY') {
           })}
         </div>
       </div>
+    );
+  };
+
+  const AnalyticsBarList = ({ title, items, color }) => {
+    const max = Math.max(...items.map((it) => it.count), 1);
+    return (
+      <ThemedCard style={{ padding: '18px 20px', border: `1px solid ${UI.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: UI.primary, marginBottom: 14 }}>{title}</div>
+        {items.length === 0 ? (
+          <div style={{ fontSize: 12, color: UI.muted }}>No data in this range.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {items.map((item) => (
+              <div key={item.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 48px', gap: 12, alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: UI.text, marginBottom: 6, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item.label}</div>
+                  <div style={{ height: 8, background: '#EEF2F7', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{ width: `${(item.count / max) * 100}%`, height: '100%', background: color, borderRadius: 999 }} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary, textAlign: 'right' }}>{item.count}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </ThemedCard>
+    );
+  };
+
+  const AnalyticsPieCard = ({ title, segments }) => {
+    const filteredSegments = segments.filter((segment) => segment.value > 0);
+    const total = filteredSegments.reduce((sum, segment) => sum + segment.value, 0);
+    const radius = 56;
+    const circumference = 2 * Math.PI * radius;
+    let offset = 0;
+
+    return (
+      <ThemedCard style={{ padding: '18px 20px', border: `1px solid ${UI.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: UI.primary, marginBottom: 16 }}>{title}</div>
+        {total === 0 ? (
+          <div style={{ fontSize: 12, color: UI.muted }}>No data in this range.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 18, alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <svg width="160" height="160" viewBox="0 0 160 160" aria-label={title}>
+                <g transform="translate(80,80) rotate(-90)">
+                  <circle r={radius} fill="none" stroke="#EDF2F7" strokeWidth="24" />
+                  {filteredSegments.map((segment) => {
+                    const length = (segment.value / total) * circumference;
+                    const circle = (
+                      <circle
+                        key={segment.label}
+                        r={radius}
+                        fill="none"
+                        stroke={segment.color}
+                        strokeWidth="24"
+                        strokeDasharray={`${length} ${circumference - length}`}
+                        strokeDashoffset={-offset}
+                        strokeLinecap="butt"
+                      />
+                    );
+                    offset += length;
+                    return circle;
+                  })}
+                </g>
+                <text x="80" y="74" textAnchor="middle" style={{ fontSize: 10, fill: UI.muted, fontWeight: 600 }}>Total</text>
+                <text x="80" y="94" textAnchor="middle" style={{ fontSize: 21, fill: UI.primary, fontWeight: 600 }}>{total}</text>
+              </svg>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {filteredSegments.map((segment) => (
+                <div key={segment.label} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) auto', gap: 10, alignItems: 'center' }}>
+                  <div style={{ width: 12, height: 12, background: segment.color }} />
+                  <div style={{ fontSize: 11, fontWeight: 500, color: UI.text }}>{segment.label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary }}>{segment.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </ThemedCard>
     );
   };
 
@@ -972,140 +1159,256 @@ if (timeFrame === 'DAY') {
 
       {/* Header Info */}
       <div style={{ padding: '0 24px 20px' }}>
-        <ThemedCard style={{ padding: '16px 20px', overflow: 'visible' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <ThemedCard style={{ padding: 0, overflow: 'visible', border: `1px solid ${rgba(UI.border, 0.7)}` }}>
+          <div style={{ padding: '22px 24px', background: 'linear-gradient(135deg, rgba(35,56,118,0.05), rgba(191,216,210,0.3))', borderBottom: `1px solid ${rgba(UI.border, 0.8)}` }}>
+            <div style={{ maxWidth: 720 }}>
+              <div style={{ fontFamily: THEME.serifFont, fontSize: 24, fontWeight: 700, color: UI.primary, lineHeight: 1.1, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                Coordinator Dashboard
+                {loading && <div style={{ fontSize: 12, fontWeight: 600, color: '#9A6B00', background: 'rgba(244,196,115,0.18)', padding: '4px 8px', borderRadius: 999 }}>Syncing data</div>}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ padding: '18px 24px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, alignItems: 'end' }}>
             <div>
-              <div style={{ fontFamily: THEME.serifFont, fontSize: 20, fontWeight: 700, color: UI.primary, lineHeight: 1.1, display: 'flex', alignItems: 'center', gap: 12 }}>
-                Coordinator Dashboard 
-                {loading && <div style={{ fontSize: 12, fontWeight: 500, color: UI.accentYellow, fontFamily: THEME.sansFont }}>Syncing Data...</div>}
-              </div>
-              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                <ViewTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity Timeline" onClick={() => setActiveTab('TIMELINE')} />
-                <ViewTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" onClick={() => setActiveTab('PENDING')} />
-                
-                {(activeTab === 'TIMELINE' || activeTab === 'PENDING') && (
-  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}`, marginLeft: 16 }}>
-    <select
-      value={timeFrame}
-      onChange={(e) => setTimeFrame(e.target.value)}
-      style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
-    >
-      <option value="DAY">Today</option>
-      <option value="WEEK">Week</option>
-      <option value="14_DAYS">Last 14 Days</option>
-      <option value="MONTH">Month</option>
-    </select>
-
-    <div style={{ width: 1, height: 16, background: UI.border }} />
-    <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-      <ChevronLeft size={16}/>
-    </button>
-
-    <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
-      {dateLabel}
-    </span>
-
-    <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
-      <ChevronRight size={16}/>
-    </button>
-
-    <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
-    <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
-      Today
-    </button>
-  </div>
-)}
+              <Label>Student Search</Label>
+              <div style={{ marginTop: 6 }}>
+                <StudentSearch
+                  students={studentsForSearch}
+                  value={studentSearch}
+                  onChangeValue={setStudentSearch}
+                  selectedTcId={selectedStudentTcId}
+                  onPickTcId={setSelectedStudentTcId}
+                  onClear={() => {
+                    setSelectedStudentTcId(null);
+                    setStudentSearch('');
+                  }}
+                />
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', flex: 1, minWidth: 320 }}>
-              <div style={{ minWidth: 240 }}>
-                <Label>Student Search</Label>
-                <div style={{ marginTop: 6 }}>
-                  <StudentSearch
-                    students={studentsForSearch}
-                    value={studentSearch}
-                    onChangeValue={setStudentSearch}
-                    selectedTcId={selectedStudentTcId}
-                    onPickTcId={setSelectedStudentTcId}
-                    onClear={() => {
-                      setSelectedStudentTcId(null);
-                      setStudentSearch('');
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ minWidth: 240 }}>
-                <Label>Lesson Search</Label>
-                <div style={{ marginTop: 6, position: 'relative' }}>
-                  <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: UI.muted }} />
-                  <Field 
-                    value={activeTab === 'MATRIX' ? matrixCatActQuery : catActQuery} 
-                    onChange={(e) => activeTab === 'MATRIX' ? setMatrixCatActQuery(e.target.value) : setCatActQuery(e.target.value)} 
-                    placeholder="Filter activity name…" 
-                    style={{ paddingLeft: 36, height: 38 }} 
-                  />
-                  {(activeTab === 'MATRIX' ? matrixCatActQuery : catActQuery) && (
-                    <button
-                      onClick={() => activeTab === 'MATRIX' ? setMatrixCatActQuery('') : setCatActQuery('')}
-                      style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: UI.muted }}
-                      title="Clear"
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-                <Button variant="ghost" onClick={clearAllFilters} style={{ height: 38 }}>
-                  Clear filters
-                </Button>
+            <div>
+              <Label>{activeTab === 'TIMELINE' ? 'Activity Search' : 'Action Search'}</Label>
+              <div style={{ marginTop: 6, position: 'relative' }}>
+                <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: UI.muted }} />
+                <Field
+                  value={catActQuery}
+                  onChange={(e) => setCatActQuery(e.target.value)}
+                  placeholder={activeTab === 'TIMELINE' ? 'Search lessons or categories…' : 'Search follow-up activities…'}
+                  style={{ paddingLeft: 36, height: 38 }}
+                />
+                {catActQuery && (
+                  <button
+                    onClick={() => setCatActQuery('')}
+                    style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: UI.muted }}
+                    title="Clear"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
+
+            <div>
+              <Label>Area</Label>
+              <div style={{ marginTop: 6 }}>
+                <Field as="select" value={filterArea} onChange={e => { setFilterArea(e.target.value); setFilterCategory('ALL'); }} style={{ height: 38, fontSize: 13 }}>
+                  <option value="ALL">All Areas</option>
+                  {uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
+                </Field>
+              </div>
+            </div>
+
+            <div>
+              <Label>Category</Label>
+              <div style={{ marginTop: 6 }}>
+                <Field as="select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ height: 38, fontSize: 13 }}>
+                  <option value="ALL">All Categories</option>
+                  {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                </Field>
+              </div>
+            </div>
+
           </div>
         </ThemedCard>
       </div>
 
       {/* Main Content */}
       <div style={{ padding: '0 24px 30px' }}>
-        
-        {/* SHARED FILTER BAR */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: '#fff', padding: '12px 20px', border: `1px solid ${UI.border}`, borderRadius: R, marginBottom: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.muted, fontSize: 13, fontWeight: 600 }}><Filter size={14}/> Filters:</div>
-            <Field as="select" value={filterArea} onChange={e => { setFilterArea(e.target.value); setFilterCategory('ALL'); }} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
-              <option value="ALL">All Areas</option>
-              {uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
-            </Field>
-            <Field as="select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ width: 180, height: 32, fontSize: 12, padding: '4px 8px' }}>
-              <option value="ALL">All Categories</option>
-              {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
-            </Field>
-            
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-              {activeTab === 'TIMELINE' && (
-                  <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 32, fontSize: 12, border: `1px solid ${UI.border}` }}>
-                     {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
-                     {expandAll ? 'Collapse All' : 'Expand All'}
-                  </Button>
-              )}
-              {activeTab === 'PENDING' && (
-                  <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 32, fontSize: 12, border: `1px solid ${UI.border}` }}>
-                      {hideCompleted ? 'Show resolved' : 'Hide resolved'}
-                  </Button>
-              )}
+        <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
+          <ThemedCard style={{ padding: '14px', border: `1px solid ${UI.border}`, position: 'sticky', top: 88 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <SideNavTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity" meta={timelineSummary.total} onClick={() => setActiveTab('TIMELINE')} />
+              <SideNavTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" meta={combinedFollowUps.length - hiddenResolvedCount} onClick={() => setActiveTab('PENDING')} />
+              <SideNavTab active={activeTab === 'ANALYTICS'} icon={BarChart3} label="Analytics" meta={analyticsRows.length} onClick={() => setActiveTab('ANALYTICS')} />
             </div>
-        </div>
+          </ThemedCard>
+
+          <div>
+        {activeTab === 'TIMELINE' && (
+          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
+                  <History size={16} />
+                  Activity Timeline
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
+                  <select
+                    value={timeFrame}
+                    onChange={(e) => setTimeFrame(e.target.value)}
+                    style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    <option value="DAY">Today</option>
+                    <option value="WEEK">Week</option>
+                    <option value="14_DAYS">Last 14 Days</option>
+                    <option value="MONTH">Month</option>
+                  </select>
+                  <div style={{ width: 1, height: 16, background: UI.border }} />
+                  <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                    <ChevronLeft size={16}/>
+                  </button>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+                    {dateLabel}
+                  </span>
+                  <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                    <ChevronRight size={16}/>
+                  </button>
+                  <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
+                  <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
+                    Today
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', background: '#f8fafc', padding: 4, borderRadius: R, border: `1px solid ${UI.border}` }}>
+                  <ViewToggle active={timelineFormat === 'KANBAN'} icon={Columns} label="Board View" onClick={() => setTimelineFormat('KANBAN')} />
+                  <ViewToggle active={timelineFormat === 'LIST'} icon={List} label="List View" onClick={() => setTimelineFormat('LIST')} />
+                </div>
+
+                <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
+                  {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
+                  {expandAll ? 'Collapse All' : 'Expand All'}
+                </Button>
+              </div>
+            </div>
+          </ThemedCard>
+        )}
+
+        {activeTab === 'PENDING' && (
+          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
+                  <Target size={16} />
+                  Action Items
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
+                  <select
+                    value={timeFrame}
+                    onChange={(e) => setTimeFrame(e.target.value)}
+                    style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    <option value="DAY">Today</option>
+                    <option value="WEEK">Week</option>
+                    <option value="14_DAYS">Last 14 Days</option>
+                    <option value="MONTH">Month</option>
+                  </select>
+                  <div style={{ width: 1, height: 16, background: UI.border }} />
+                  <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                    <ChevronLeft size={16}/>
+                  </button>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+                    {dateLabel}
+                  </span>
+                  <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                    <ChevronRight size={16}/>
+                  </button>
+                  <div style={{ width: 1, height: 20, background: UI.border, margin: '0 4px' }} />
+                  <button onClick={() => setActiveDate(new Date())} style={{ fontSize: 11, fontWeight: 600, color: UI.muted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px' }}>
+                    Today
+                  </button>
+                </div>
+
+                <Button variant="ghost" onClick={() => setHideCompleted(!hideCompleted)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
+                  {hideCompleted ? 'Show resolved' : 'Hide resolved'}
+                </Button>
+              </div>
+            </div>
+          </ThemedCard>
+        )}
+
+        {activeTab === 'ANALYTICS' && (
+          <ThemedCard style={{ padding: '16px 20px', marginBottom: 20, border: `1px solid ${UI.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: UI.primary, fontSize: 14, fontWeight: 700 }}>
+                <BarChart3 size={16} />
+                Analytics
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: '4px', borderRadius: R, border: `1px solid ${UI.border}` }}>
+                <select
+                  value={timeFrame}
+                  onChange={(e) => setTimeFrame(e.target.value)}
+                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, color: UI.primary, padding: '0 8px', cursor: 'pointer', fontSize: 13 }}
+                >
+                  <option value="DAY">Today</option>
+                  <option value="WEEK">Week</option>
+                  <option value="14_DAYS">Last 14 Days</option>
+                  <option value="MONTH">Month</option>
+                </select>
+                <div style={{ width: 1, height: 16, background: UI.border }} />
+                <button onClick={handlePrevDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                  <ChevronLeft size={16}/>
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 700, color: UI.primary, userSelect: 'none', minWidth: 140, textAlign: 'center' }}>
+                  {dateLabel}
+                </span>
+                <button onClick={handleNextDate} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: UI.primary, padding: 4 }}>
+                  <ChevronRight size={16}/>
+                </button>
+              </div>
+            </div>
+          </ThemedCard>
+        )}
 
         {/* TIMELINE TAB */}
-        {activeTab === 'TIMELINE' && (
-          <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10 }}>
-            <KanbanColumn title="Introduced" color="#1E88E5" count={cols.I.length} items={cols.I} forceExpandAll={expandAll} />
-            <KanbanColumn title="Practiced" color="#F5B041" count={cols.P.length} items={cols.P} forceExpandAll={expandAll} />
-            <KanbanColumn title="Needs Review" color="#E53935" count={cols.N.length} items={cols.N} forceExpandAll={expandAll} />
+{activeTab === 'TIMELINE' && timelineFormat === 'KANBAN' && (
+  <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10 }}>
+    <KanbanColumn title="Introduced" color="#1E88E5" count={cols.I.length} items={cols.I} forceExpandAll={expandAll} />
+    <KanbanColumn title="Practiced" color="#F5B041" count={cols.P.length} items={cols.P} forceExpandAll={expandAll} />
+    <KanbanColumn title="Needs Review" color="#E53935" count={cols.N.length} items={cols.N} forceExpandAll={expandAll} />
+  </div>
+)}
+
+{activeTab === 'TIMELINE' && timelineFormat === 'LIST' && (
+  <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.55fr) 108px', gap: 12, padding: '10px 16px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}`, fontSize: 11, fontWeight: 700, color: UI.muted, textTransform: 'uppercase' }}>
+      <div>Date</div><div>Student / Classroom</div><div>Area</div><div>Activity</div><div>Status</div>
+    </div>
+    {dateFilteredData.map((item, idx) => {
+      const stus = filterStudentRefs(item.child_tc_ids || [item.child_tc_id]).map((s) => {
+        const className = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
+        return `${s.name} • ${className}`;
+      }).join(', ');
+      if (!stus) return null;
+      return (
+        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.55fr) 108px', gap: 12, padding: '14px 16px', borderBottom: `1px solid ${UI.border}`, background: '#fff', alignItems: 'center' }}>
+          <div style={{ fontSize: 12, color: UI.muted }}>{formatShortDateStr(item.observation_date)}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: UI.primary, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{stus}</div>
+          <div style={{ fontSize: 12, color: UI.text }}>{item.area_name}</div>
+          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.35 }}>{item.activity_name || 'Untitled Activity'}</div>
+          <div>
+            <StatusLabelBadge status={item.bucket || inferBucket(item.note || item.raw_text)} />
           </div>
-        )}
+        </div>
+      )
+    })}
+  </ThemedCard>
+)}
 
         {/* FOLLOW-UP ITEMS TAB */}
         {activeTab === 'PENDING' && (
@@ -1178,6 +1481,34 @@ if (timeFrame === 'DAY') {
             </ThemedCard>
           </div>
         )}
+
+        {activeTab === 'ANALYTICS' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+              <StatCard title="Observations" count={analyticsRows.length} icon={BarChart3} color={UI.primary} />
+              <StatCard title="Introduced" count={analyticsSummary.status.INTRODUCED} icon={History} color="#1E88E5" />
+              <StatCard title="Practiced" count={analyticsSummary.status.PRACTICED} icon={BookOpen} color="#F5B041" />
+              <StatCard title="Needs Review" count={analyticsSummary.status.REWORK} icon={AlertCircle} color="#E53935" />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+              <AnalyticsPieCard
+                title="Status Breakdown"
+                segments={[
+                  { label: 'Introduced', value: analyticsSummary.status.INTRODUCED, color: '#1E88E5' },
+                  { label: 'Practiced', value: analyticsSummary.status.PRACTICED, color: '#F5B041' },
+                  { label: 'Needs Review', value: analyticsSummary.status.REWORK, color: '#E53935' },
+                  { label: 'Mastered', value: analyticsSummary.status.MASTERED, color: '#233876' },
+                ]}
+              />
+              <AnalyticsBarList title="Most Worked Areas" items={analyticsSummary.topAreas} color={UI.primary} />
+              <AnalyticsBarList title="Most Worked Activities" items={analyticsSummary.topActivities} color={UI.accentYellow} />
+              <AnalyticsBarList title="Most Active Students" items={analyticsSummary.topStudents} color={UI.accent} />
+            </div>
+          </div>
+        )}
+          </div>
+        </div>
 
       </div>
     </div>

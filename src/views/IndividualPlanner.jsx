@@ -103,6 +103,13 @@ const statusConfig = {
 };
 
 const getRawFirstTitle = (it) => clean(it?.raw_activity) || clean(it?.activity) || clean(getNormalizedItem(it || {})?.rawActivity) || clean(getNormalizedItem(it || {})?.title) || 'Untitled Activity';
+const splitActivityNames = (value, fallback = 'Activity') => {
+  const names = String(value || '')
+    .split('•')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return names.length ? names : [fallback];
+};
 
 const bucketToLabel = (b) => {
   const x = String(b || '').toUpperCase();
@@ -845,18 +852,26 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
       text_content: raw.text_content,
       activity_name: tc.activity_name
     });
+    const bucket = tc.bucket || inferTcBucket(tc.note || raw.text_content);
+    const names = splitActivityNames(actName, tc.activity_name || 'Activity');
 
-    const item = {
-      ...tc,
-      tc_observation_id: id,
-      activity_name: actName,
-      cleanedNote,
-      bucket: tc.bucket || inferTcBucket(tc.note || raw.text_content),
-      _raw_html: raw.html_content || '',
-    };
+    names.forEach((name, index) => {
+      const entryKey = `${id}-${index}-${name}`;
+      const item = {
+        ...tc,
+        id: entryKey,
+        _entry_key: entryKey,
+        tc_observation_id: id,
+        activity_name: name,
+        cleanedNote,
+        bucket,
+        _raw_html: raw.html_content || '',
+      };
 
-    pMap.set(id, item);
-    pTc.push(item);
+      pTc.push(item);
+    });
+
+    pMap.set(id, true);
   });
 
   return { processedTc: pTc };
@@ -960,7 +975,7 @@ const KanbanColumn = ({ title, color, count, items }) => {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
                     {areaItems.map(item => (
-                      <div key={item.id} style={{ background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                      <div key={item._entry_key || item.id} style={{ background: '#fff', borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                           <div style={{ fontSize: 12, fontWeight: 600, color: UI.text, lineHeight: 1.3 }}>{item.activity_name || 'Activity'}</div>
 <div style={{ fontSize: 10, color: UI.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>
@@ -1052,7 +1067,7 @@ const KanbanColumn = ({ title, color, count, items }) => {
 
   return (
     <div
-      key={String(o.tc_observation_id || o.id)}
+      key={String(o._entry_key || o.tc_observation_id || o.id)}
       style={{
         display: 'grid',
         gridTemplateColumns: '85px 120px 130px 100px 140px 1fr',
@@ -1117,7 +1132,7 @@ const KanbanColumn = ({ title, color, count, items }) => {
 /** ---------------------------
  * TAB 3: CURRICULUM MATRIX (Tree View)
  * --------------------------- */
-const TreeItem = ({ label, level = 0, children, status, globalExpanded }) => {
+const TreeItem = ({ label, level = 0, children, status, date, globalExpanded }) => {
   const [isExpanded, setIsExpanded] = useState(level === 0);
   const hasChildren = React.Children.count(children) > 0;
 
@@ -1130,20 +1145,29 @@ const TreeItem = ({ label, level = 0, children, status, globalExpanded }) => {
       <div 
         onClick={() => hasChildren && setIsExpanded(!isExpanded)}
         style={{
-          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', cursor: hasChildren ? 'pointer' : 'default',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', cursor: hasChildren ? 'pointer' : 'default',
           borderRadius: 4, transition: 'background 0.2s', backgroundColor: level === 0 && isExpanded ? rgba(UI.primary, 0.03) : 'transparent',
           borderBottom: level === 0 ? `1px solid ${UI.border}` : 'none'
         }}
         onMouseEnter={(e) => hasChildren && (e.currentTarget.style.backgroundColor = rgba(UI.primary, 0.05))}
         onMouseLeave={(e) => hasChildren && (e.currentTarget.style.backgroundColor = level === 0 && isExpanded ? rgba(UI.primary, 0.03) : 'transparent')}
       >
-        <div style={{ width: 20, display: 'flex', justifyContent: 'center' }}>
-          {hasChildren ? (isExpanded ? <ChevronDown size={14} color={UI.muted} /> : <ChevronRight size={14} color={UI.muted} />) : (<div style={{ width: 4, height: 4, borderRadius: '50%', background: UI.border }} />)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 20, display: 'flex', justifyContent: 'center' }}>
+            {hasChildren ? (isExpanded ? <ChevronDown size={14} color={UI.muted} /> : <ChevronRight size={14} color={UI.muted} />) : (<div style={{ width: 4, height: 4, borderRadius: '50%', background: UI.border }} />)}
+          </div>
+          {!hasChildren && status && <ProgressMarker status={status} />}
+          <span style={{ fontSize: level === 0 ? 14 : 13, fontWeight: level === 0 ? 700 : (hasChildren ? 600 : 400), color: level === 0 ? UI.primary : UI.text, textTransform: level === 0 ? 'uppercase' : 'none' }}>
+            {label}
+          </span>
         </div>
-        {!hasChildren && status && <ProgressMarker status={status} />}
-        <span style={{ fontSize: level === 0 ? 14 : 13, fontWeight: level === 0 ? 700 : (hasChildren ? 600 : 400), color: level === 0 ? UI.primary : UI.text, textTransform: level === 0 ? 'uppercase' : 'none' }}>
-          {label}
-        </span>
+        
+        {/* Render Date for items without children */}
+        {!hasChildren && date && (
+          <span style={{ fontSize: 11, color: UI.muted, fontWeight: 500 }}>
+            {formatShortDate(date)}
+          </span>
+        )}
       </div>
       {isExpanded && hasChildren && (<div style={{ borderLeft: `1px solid ${UI.border}`, marginLeft: 21, marginTop: 2, marginBottom: 8 }}>{children}</div>)}
     </div>
@@ -1206,7 +1230,12 @@ const ProgressMatrix = ({ student, showToast }) => {
       const lesson = item.activity_name || 'Activity';
       if (!latestStatusMap[area]) latestStatusMap[area] = {};
       if (!latestStatusMap[area][cat]) latestStatusMap[area][cat] = {};
-      latestStatusMap[area][cat][lesson] = item.bucket || 'INTRODUCED';
+      
+      // Store object with date alongside status
+      latestStatusMap[area][cat][lesson] = {
+          status: item.bucket || 'INTRODUCED',
+          date: item.observation_date || item.date
+      };
     });
 
     const root = {};
@@ -1214,14 +1243,15 @@ const ProgressMatrix = ({ student, showToast }) => {
 
     Object.entries(latestStatusMap).forEach(([area, cats]) => {
       Object.entries(cats).forEach(([cat, lessons]) => {
-        Object.entries(lessons).forEach(([lesson, status]) => {
+        Object.entries(lessons).forEach(([lesson, dataObj]) => {
           const matchesSearch = lesson.toLowerCase().includes(q) || cat.toLowerCase().includes(q) || area.toLowerCase().includes(q);
           const matchesArea = filterArea === 'ALL' || area === filterArea;
-          const matchesStatus = filterStatus === 'ALL' || status === filterStatus;
+          const matchesStatus = filterStatus === 'ALL' || dataObj.status === filterStatus;
+          
           if (matchesSearch && matchesArea && matchesStatus) {
             if (!root[area]) root[area] = {};
             if (!root[area][cat]) root[area][cat] = {};
-            root[area][cat][lesson] = status;
+            root[area][cat][lesson] = dataObj; // Assign the object
           }
         });
       });
@@ -1243,9 +1273,31 @@ const ProgressMatrix = ({ student, showToast }) => {
           <Field as="select" value={filterArea} onChange={e => setFilterArea(e.target.value)} style={{ width: 160 }}>
             <option value="ALL">All Areas</option>{uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
           </Field>
-          <Field as="select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 160 }}>
-            <option value="ALL">All Statuses</option><option value="INTRODUCED">Introduced</option><option value="PRACTICED">Practiced</option><option value="MASTERED">Mastered</option><option value="REWORK">Needs Review</option>
-          </Field>
+          
+          {/* Status Pills */}
+          <div style={{ display: 'flex', gap: 6, background: '#f8fafc', padding: 4, borderRadius: 8, border: `1px solid ${UI.border}` }}>
+            {[
+              { id: 'ALL', label: 'All Statuses' },
+              { id: 'INTRODUCED', label: 'Introduced' },
+              { id: 'PRACTICED', label: 'Practiced' },
+              { id: 'MASTERED', label: 'Mastered' },
+              { id: 'REWORK', label: 'Needs Review' }
+            ].map(s => (
+              <button
+                key={s.id}
+                onClick={() => setFilterStatus(s.id)}
+                style={{
+                  padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  border: 'none', transition: 'all 0.15s',
+                  background: filterStatus === s.id ? UI.primary : 'transparent',
+                  color: filterStatus === s.id ? '#fff' : UI.muted
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ borderLeft: `1px solid ${UI.border}`, height: 24, margin: '0 8px' }} />
           <div style={{ display: 'flex', gap: 8 }}>
             <Button variant="ghost" onClick={() => setGlobalExpanded(true)} style={{ height: 32, fontSize: 11 }}>Expand All</Button>
@@ -1268,8 +1320,8 @@ const ProgressMatrix = ({ student, showToast }) => {
             <TreeItem key={area} label={area} level={0} globalExpanded={globalExpanded}>
               {Object.entries(categories).map(([cat, lessons]) => (
                 <TreeItem key={cat} label={cat} level={1} globalExpanded={globalExpanded}>
-                  {Object.entries(lessons).map(([lesson, status]) => (
-                    <TreeItem key={lesson} label={lesson} level={2} status={status} globalExpanded={globalExpanded} />
+                  {Object.entries(lessons).map(([lesson, statusObj]) => (
+                    <TreeItem key={lesson} label={lesson} level={2} status={statusObj.status} date={statusObj.date} globalExpanded={globalExpanded} />
                   ))}
                 </TreeItem>
               ))}
