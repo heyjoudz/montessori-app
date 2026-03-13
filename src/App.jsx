@@ -458,9 +458,37 @@ export default function App() {
   );
 }
 
-// ------------------------
-// SIDEBAR
-// ------------------------
+function CollapsedNavGlyph({ glyph, active = false }) {
+  const stroke = active ? THEME.brandSecondary : THEME.textMuted;
+  const fill = active ? THEME.brandYellow : '#F6EBDD';
+  const baseStyle = {
+    width: 14,
+    height: 14,
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    flexShrink: 0
+  };
+
+  switch (glyph) {
+    case 'home':
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: 4, background: fill, border: `1.5px solid ${stroke}` }} />;
+    case 'yearly':
+      return <span aria-hidden="true" style={{ ...baseStyle, background: fill, border: `1.5px solid ${stroke}`, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} />;
+    case 'coordination':
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: 3, background: fill, border: `1.5px solid ${stroke}`, transform: 'rotate(45deg)' }} />;
+    case 'individual':
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: '50%', background: fill, border: `1.5px solid ${stroke}` }} />;
+    case 'assessments':
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: 3, border: `1.5px solid ${stroke}`, background: `linear-gradient(180deg, ${fill} 0%, ${fill} 45%, transparent 45%, transparent 100%)` }} />;
+    case 'config':
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: 3, background: fill, border: `1.5px dashed ${stroke}` }} />;
+    case 'admin':
+      return <span aria-hidden="true" style={{ ...baseStyle, background: fill, border: `1.5px solid ${stroke}`, clipPath: 'polygon(50% 0%, 92% 20%, 76% 100%, 24% 100%, 8% 20%)' }} />;
+    default:
+      return <span aria-hidden="true" style={{ ...baseStyle, borderRadius: 4, background: fill, border: `1.5px solid ${stroke}` }} />;
+  }
+}
+
 function Sidebar({
   isCollapsed,
   onToggle,
@@ -475,6 +503,16 @@ function Sidebar({
 }) {
   const isSupervisor = profile?.role === 'supervisor' || profile?.role === 'super_admin';
   const isCoordinator = isSupervisor || profile?.role === 'coordinator';
+  const navItems = [
+    { key: 'HOME', label: 'Home', glyph: 'home' },
+    { key: 'YEARLY', label: 'Scope & Sequence', glyph: 'yearly' },
+    ...(isCoordinator ? [{ key: 'COORDINATION', label: 'Coordinator Dashboard', glyph: 'coordination' }] : []),
+    { key: 'INDIVIDUAL', label: 'Individual Plans', glyph: 'individual' },
+    { key: 'ASSESSMENTS', label: 'Assessments', glyph: 'assessments' },
+    { key: 'CONFIG', label: 'Configuration', glyph: 'config' },
+    ...(isSupervisor ? [{ key: 'ADMIN', label: 'Admin Panel', glyph: 'admin' }] : []),
+  ];
+  const activeNavItem = navItems.find((item) => item.key === viewState) || navItems[0];
 
   const handleSafeSignOut = async () => {
     const { error } = await supabase.auth.signOut();
@@ -540,13 +578,44 @@ function Sidebar({
       </div>
 
       <div style={{ padding: '10px 0', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-        <NavItem icon="🏠" label={isCollapsed ? "" : "Home"} active={viewState === 'HOME'} onClick={() => onNavigate('HOME')} centered={isCollapsed} />
-        <NavItem icon="🗺️" label={isCollapsed ? "" : "Scope & Sequence"} active={viewState === 'YEARLY'} onClick={() => onNavigate('YEARLY')} centered={isCollapsed} />
-        {<NavItem icon="📋" label={isCollapsed ? "" : "Coordinator Dashboard"} active={viewState === 'COORDINATION'} onClick={() => onNavigate('COORDINATION')} centered={isCollapsed} />}
-        <NavItem icon="🎓" label={isCollapsed ? "" : "Individual Plans"} active={viewState === 'INDIVIDUAL'} onClick={() => onNavigate('INDIVIDUAL')} centered={isCollapsed} />
-        <NavItem icon="📝" label={isCollapsed ? "" : "Assessments"} active={viewState === 'ASSESSMENTS'} onClick={() => onNavigate('ASSESSMENTS')} centered={isCollapsed} />
-        <NavItem icon="⚙️" label={isCollapsed ? "" : "Configuration"} active={viewState === 'CONFIG'} onClick={() => onNavigate('CONFIG')} centered={isCollapsed} />
-        {isSupervisor && <NavItem icon="🛡️" label={isCollapsed ? "" : "Admin Panel"} active={viewState === 'ADMIN'} onClick={() => onNavigate('ADMIN')} centered={isCollapsed} />}
+        {isCollapsed && (
+          <div style={{ padding: '4px 10px 10px', display: 'flex', justifyContent: 'center' }}>
+            <div
+              style={{
+                minHeight: 54,
+                width: '100%',
+                maxWidth: 58,
+                border: '1px solid #eee',
+                background: '#faf7f3',
+                color: THEME.textMuted,
+                borderRadius: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                padding: '6px 4px',
+                textAlign: 'center'
+              }}
+              title={activeNavItem?.label || 'Menu'}
+            >
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Menu</div>
+              <CollapsedNavGlyph glyph={activeNavItem?.glyph} active />
+            </div>
+          </div>
+        )}
+
+        {navItems.map((item) => (
+          <NavItem
+            key={item.key}
+            icon={isCollapsed ? <CollapsedNavGlyph glyph={item.glyph} active={viewState === item.key} /> : null}
+            label={item.label}
+            active={viewState === item.key}
+            onClick={() => onNavigate(item.key)}
+            centered={isCollapsed}
+            hideLabel={isCollapsed}
+          />
+        ))}
       </div>
 
       <div style={{ padding: isCollapsed ? 12 : 22 }}>

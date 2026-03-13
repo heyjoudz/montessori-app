@@ -198,19 +198,18 @@ const Button = ({ variant = 'primary', children, style, ...props }) => {
   );
 };
 
-// MATCHES EXACT INDIVIDUAL PLANNER DESIGN
+// MATCHES INDIVIDUAL PLANNER CLASSROOM HEADER TREATMENT
 const ClassTab = ({ active, label, onClick }) => (
   <button
     onClick={onClick}
     style={{
-      border: 'none',
+      border: active ? '1px solid #233876' : '1px solid #E5E7EB',
       cursor: 'pointer',
-      padding: '12px 20px',
-      background: active ? UI.primary : '#fff',
-      color: active ? '#fff' : UI.text,
-      boxShadow: active ? `4px 4px 0px 0px ${UI.secondary}` : '2px 2px 0px #eee',
-      fontWeight: 700,
-      borderRadius: THEME.radius,
+      padding: '10px 20px',
+      background: active ? '#233876' : '#fff',
+      color: active ? '#fff' : '#4B5563',
+      fontWeight: 600,
+      borderRadius: '0px',
       transition: 'all 0.15s',
       fontFamily: THEME.sansFont,
       fontSize: 13,
@@ -339,7 +338,7 @@ export default function MasterTimelineView({
   showToast,
   onDataChanged,
 }) {
-  const [selectedClassId, setSelectedClassId] = useState(propClassId || classrooms?.[0]?.id);
+  const [selectedClassId, setSelectedClassId] = useState(propClassId || classrooms?.[0]?.id || 'ALL');
   const [areaFilter, setAreaFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState('WEEK');
@@ -403,7 +402,7 @@ export default function MasterTimelineView({
   }, [propClassId]);
 
   useEffect(() => {
-    if (!selectedClassId && classrooms?.[0]?.id) setSelectedClassId(classrooms[0].id);
+    if (!selectedClassId) setSelectedClassId(classrooms?.[0]?.id || 'ALL');
   }, [classrooms, selectedClassId]);
 
   useEffect(() => {
@@ -423,9 +422,12 @@ export default function MasterTimelineView({
   };
 
   const currentRealWeek = useMemo(() => getWeekFromDate(currentDate), [currentDate]);
+  const selectedClassKey = selectedClassId == null ? '' : String(selectedClassId);
 
   const weeks = useMemo(() => {
-    const plans = (masterPlans || []).filter((p) => String(p.classroom_id) === String(selectedClassId));
+    const plans = selectedClassKey === 'ALL'
+      ? (masterPlans || [])
+      : (masterPlans || []).filter((p) => String(p.classroom_id) === selectedClassKey);
     const byWeek = {};
 
     for (const p of plans) {
@@ -483,7 +485,7 @@ export default function MasterTimelineView({
     }
 
     return Object.values(byWeek).sort((a, b) => a.week - b.week);
-  }, [masterPlans, localSessions, selectedClassId]);
+  }, [masterPlans, localSessions, selectedClassKey]);
 
   const uniqueMonths = useMemo(() => [...new Set(weeks.map((w) => w.monthKey))], [weeks]);
 
@@ -656,16 +658,39 @@ export default function MasterTimelineView({
         style={{
           flexShrink: 0,
           background: UI.bg,
-          padding: '20px 24px 12px', 
+          padding: '20px 24px 12px',
         }}
       >
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginBottom: 16,
+          }}
+        >
+          <ClassTab
+            active={selectedClassKey === 'ALL'}
+            label="All"
+            onClick={() => setSelectedClassId('ALL')}
+          />
           {classrooms?.map((c) => (
-            <ClassTab key={c.id} active={String(selectedClassId) === String(c.id)} label={c.name} onClick={() => setSelectedClassId(c.id)} />
+            <ClassTab
+              key={c.id}
+              active={selectedClassKey === String(c.id)}
+              label={c.name}
+              onClick={() => setSelectedClassId(c.id)}
+            />
           ))}
         </div>
 
         <ThemedCard style={{ padding: '14px 16px', border: `1px solid ${UI.accent}` }}>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontFamily: THEME.serifFont, fontSize: 20, fontWeight: 700, color: UI.primary, lineHeight: 1.1 }}>
+              Scope & Sequence
+            </div>
+          </div>
+
           <div
             style={{
               display: 'flex',
@@ -676,12 +701,8 @@ export default function MasterTimelineView({
             }}
           >
             <div>
-              <div style={{ fontFamily: THEME.serifFont, fontSize: 20, fontWeight: 700, color: UI.primary, lineHeight: 1.1 }}>
-                Scope & Sequence
-              </div>
-              
               {/* View Modes + Quick Nav Arrows */}
-              <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                 <ViewToggle active={viewMode === 'WEEK'} icon={Eye} label="Week" onClick={() => setViewMode('WEEK')} />
                 <ViewToggle active={viewMode === 'MONTH'} icon={CalendarDays} label="Month" onClick={() => setViewMode('MONTH')} />
                 <ViewToggle active={viewMode === 'YEAR'} icon={LayoutGrid} label="Year" onClick={() => setViewMode('YEAR')} />

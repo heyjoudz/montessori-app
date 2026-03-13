@@ -249,35 +249,47 @@ const ClassTab = ({ active, label, onClick }) => (
   </button>
 );
 
-const ViewTab = ({ active, icon: Icon, label, onClick }) => (
-  <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: R, border: active ? `1px solid ${UI.primary}` : `1px solid transparent`, background: active ? rgba(UI.primary, 0.05) : 'transparent', color: active ? UI.primary : UI.muted, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none' }}>
-    {Icon ? <Icon size={14} color={active ? UI.primary : UI.muted} /> : null} {label}
-  </button>
-);
-
-const SideNavTab = ({ active, icon: Icon, label, meta, onClick }) => (
+const DashboardTab = ({ active, icon: Icon, label, meta, onClick }) => (
   <button
     onClick={onClick}
     style={{
-      width: '100%',
-      display: 'flex',
+      display: 'inline-flex',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-      padding: '14px 14px',
+      gap: 10,
+      padding: '10px 14px',
       borderRadius: R,
       border: active ? `1px solid ${UI.primary}` : `1px solid ${UI.border}`,
-      background: active ? rgba(UI.primary, 0.08) : '#fff',
-      color: active ? UI.primary : UI.text,
+      background: active ? UI.primary : '#fff',
+      color: active ? '#fff' : UI.text,
       cursor: 'pointer',
-      textAlign: 'left'
+      minHeight: 42,
+      transition: 'all 0.15s ease',
     }}
   >
-    <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-      {Icon ? <Icon size={16} color={active ? UI.primary : UI.muted} /> : null}
-      <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-    </span>
-    {meta != null ? <span style={{ fontSize: 11, fontWeight: 700, color: active ? UI.primary : UI.muted }}>{meta}</span> : null}
+    {Icon ? <Icon size={15} color={active ? '#fff' : UI.muted} /> : null}
+    <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+    {meta != null ? (
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: active ? UI.primary : UI.muted,
+          background: active ? '#fff' : '#F8FAFC',
+          border: active ? '1px solid rgba(255,255,255,0.35)' : `1px solid ${UI.border}`,
+          padding: '2px 8px',
+          minWidth: 24,
+          textAlign: 'center'
+        }}
+      >
+        {meta}
+      </span>
+    ) : null}
+  </button>
+);
+
+const ViewTab = ({ active, icon: Icon, label, onClick }) => (
+  <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: R, border: active ? `1px solid ${UI.primary}` : `1px solid transparent`, background: active ? rgba(UI.primary, 0.05) : 'transparent', color: active ? UI.primary : UI.muted, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none' }}>
+    {Icon ? <Icon size={14} color={active ? UI.primary : UI.muted} /> : null} {label}
   </button>
 );
 
@@ -347,7 +359,7 @@ const SubtabHeader = ({ icon: Icon, title, primaryControls, secondaryControls })
       ) : null}
     </div>
     {primaryControls ? (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 12 }}>
         {primaryControls}
       </div>
     ) : null}
@@ -1027,15 +1039,24 @@ if (timeFrame === 'DAY') {
    */
   const KanbanColumn = ({ title, color, count, items, forceExpandAll }) => {
     const [expandedAreas, setExpandedAreas] = useState({});
+    const [expandedItems, setExpandedItems] = useState({});
 
     useEffect(() => {
         const newExpanded = {};
         items.forEach(item => newExpanded[item.area_name || 'General'] = true);
-        if (forceExpandAll) setExpandedAreas(newExpanded);
-        else setExpandedAreas({});
+        setExpandedAreas(newExpanded);
+    }, [forceExpandAll, items]);
+
+    useEffect(() => {
+        const nextExpandedItems = {};
+        items.forEach((item) => {
+            nextExpandedItems[item.id] = Boolean(forceExpandAll);
+        });
+        setExpandedItems(nextExpandedItems);
     }, [forceExpandAll, items]);
 
     const toggleArea = (areaName) => setExpandedAreas(prev => ({ ...prev, [areaName]: !prev[areaName] }));
+    const toggleItem = (itemId) => setExpandedItems(prev => ({ ...prev, [itemId]: !prev[itemId] }));
 
     const grouped = items.reduce((acc, item) => {
         const area = item.area_name || 'General';
@@ -1072,10 +1093,22 @@ if (timeFrame === 'DAY') {
                               {catName !== 'General' && (<div style={{ fontSize: 11, fontWeight: 600, color: UI.muted, paddingLeft: 22 }}>{catName}</div>)}
                               
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
-                                  {areaItems.map(item => (
+                                  {areaItems.map(item => {
+                                      const isItemExpanded = !!expandedItems[item.id];
+                                      return (
                                       <div key={item.id} style={{ background: '#fff', borderRadius: R, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                                          <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, lineHeight: 1.3, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item.activity_name}</div>
-                                          
+                                          <button
+                                            onClick={() => toggleItem(item.id)}
+                                            style={{ border: 'none', background: 'transparent', padding: 0, margin: 0, cursor: 'pointer', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, textAlign: 'left' }}
+                                          >
+                                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0, flex: 1 }}>
+                                              {isItemExpanded ? <ChevronDown size={14} color={UI.primary} style={{ marginTop: 2, flexShrink: 0 }} /> : <ChevronRight size={14} color={UI.primary} style={{ marginTop: 2, flexShrink: 0 }} />}
+                                              <div style={{ fontSize: 13, fontWeight: 600, color: UI.text, lineHeight: 1.3, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item.activity_name}</div>
+                                            </div>
+                                            <div style={{ fontSize: 10, fontWeight: 700, color: UI.muted, whiteSpace: 'nowrap' }}>{item.studentsList.length}</div>
+                                          </button>
+
+                                          {isItemExpanded && (
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                               {item.studentsList.map(s => (
                                                   <div key={s.tc_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '4px 8px', borderRadius: 4, border: `1px solid ${UI.border}` }}>
@@ -1084,8 +1117,9 @@ if (timeFrame === 'DAY') {
                                                   </div>
                                               ))}
                                           </div>
+                                          )}
                                       </div>
-                                  ))}
+                                  )})}
                               </div>
                           </div>
                       ))}
@@ -1227,17 +1261,25 @@ if (timeFrame === 'DAY') {
       {/* Header Info */}
       <div style={{ padding: '0 24px 20px' }}>
         <ThemedCard style={{ padding: 0, overflow: 'visible', border: `1px solid ${rgba(UI.border, 0.7)}` }}>
-          <div style={{ padding: '22px 24px', background: 'linear-gradient(135deg, rgba(35,56,118,0.05), rgba(191,216,210,0.3))', borderBottom: `1px solid ${rgba(UI.border, 0.8)}` }}>
-            <div style={{ maxWidth: 720 }}>
-              <div style={{ fontFamily: THEME.serifFont, fontSize: 24, fontWeight: 700, color: UI.primary, lineHeight: 1.1, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ padding: '20px 24px 18px', background: 'linear-gradient(135deg, rgba(35,56,118,0.04), rgba(191,216,210,0.16))', borderBottom: `1px solid ${rgba(UI.border, 0.8)}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+              <div style={{ maxWidth: 560 }}>
+                <div style={{ fontFamily: THEME.serifFont, fontSize: 24, fontWeight: 700, color: UI.primary, lineHeight: 1.1, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 Coordinator Dashboard
                 {loading && <div style={{ fontSize: 12, fontWeight: 600, color: '#9A6B00', background: 'rgba(244,196,115,0.18)', padding: '4px 8px', borderRadius: 999 }}>Syncing data</div>}
+                </div>
               </div>
             </div>
           </div>
 
-          <div style={{ padding: '18px 24px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, alignItems: 'end' }}>
-            <div>
+          <div style={{ padding: '16px 24px', borderBottom: `1px solid ${UI.border}`, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <DashboardTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity" meta={timelineSummary.total} onClick={() => setActiveTab('TIMELINE')} />
+            <DashboardTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" meta={combinedFollowUps.length - hiddenResolvedCount} onClick={() => setActiveTab('PENDING')} />
+            <DashboardTab active={activeTab === 'ANALYTICS'} icon={BarChart3} label="Analytics" meta={analyticsRows.length} onClick={() => setActiveTab('ANALYTICS')} />
+          </div>
+
+          <div style={{ padding: '16px 24px 18px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, alignItems: 'end', background: '#FCFCFD' }}>
+            <div style={{ gridColumn: '1 / span 1' }}>
               <Label>Student Search</Label>
               <div style={{ marginTop: 6 }}>
                 <StudentSearch
@@ -1302,16 +1344,7 @@ if (timeFrame === 'DAY') {
 
       {/* Main Content */}
       <div style={{ padding: '0 24px 30px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
-          <ThemedCard style={{ padding: '14px', border: `1px solid ${UI.border}`, position: 'sticky', top: 88 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <SideNavTab active={activeTab === 'TIMELINE'} icon={LayoutList} label="Activity" meta={timelineSummary.total} onClick={() => setActiveTab('TIMELINE')} />
-              <SideNavTab active={activeTab === 'PENDING'} icon={ListTodo} label="Action Items" meta={combinedFollowUps.length - hiddenResolvedCount} onClick={() => setActiveTab('PENDING')} />
-              <SideNavTab active={activeTab === 'ANALYTICS'} icon={BarChart3} label="Analytics" meta={analyticsRows.length} onClick={() => setActiveTab('ANALYTICS')} />
-            </div>
-          </ThemedCard>
-
-          <div>
+        <div>
         {activeTab === 'TIMELINE' && (
           <SubtabHeader
             icon={History}
@@ -1512,7 +1545,6 @@ if (timeFrame === 'DAY') {
             </div>
           </div>
         )}
-          </div>
         </div>
 
       </div>

@@ -379,6 +379,7 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
   const [tcData, setTcData] = useState([]);
   const [tcDataRaw, setTcDataRaw] = useState([]);
   const [manualObservationsDashboard, setManualObservationsDashboard] = useState([]);
+  const [assessmentComments, setAssessmentComments] = useState([]);
   const [weakestSkills, setWeakestSkills] = useState([]); 
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
@@ -388,7 +389,7 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
       if (!student?.id) return;
       try {
         const actPromise = supabase.from('coordination_action_plans').select('*').eq('target_student_id', student.id).order('id', { ascending: false });
-        const assessPromise = supabase.from('student_assessments').select('id').eq('student_id', student.id);
+        const assessPromise = supabase.from('student_assessments').select('id, template_id, created_at').eq('student_id', student.id);
         const obsPromise = supabase.from('coordination_observations').select('*').eq('student_id', student.id).order('date', { ascending: false }).limit(30);
         
         let tcPromise = Promise.resolve({ data: [] });
@@ -407,7 +408,8 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
         setTcDataRaw(tcRawRes?.data || []);
 
         if (assessRes.data?.length > 0) {
-           const { data: scores } = await supabase.from('student_assessment_scores').select('skill_id, score_raw').in('assessment_id', assessRes.data.map(a => a.id));
+           const assessmentIds = assessRes.data.map(a => a.id);
+           const { data: scores } = await supabase.from('student_assessment_scores').select('skill_id, score_raw, comment, assessment_id, created_at').in('assessment_id', assessmentIds);
            if (scores?.length > 0) {
                const skillLowestMap = new Map();
                scores.forEach(s => { 
@@ -427,7 +429,54 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
                        })); 
                    }
                } else setWeakestSkills([]);
+
+               const commentRows = scores.filter((s) => String(s.comment || '').trim());
+               if (commentRows.length > 0) {
+                 const uniqueSkillIds = [...new Set(commentRows.map((s) => s.skill_id).filter(Boolean))];
+                 const uniqueTemplateIds = [...new Set(assessRes.data.map((a) => a.template_id).filter(Boolean))];
+                 const [{ data: assessmentSkillRows }, { data: curriculumAreaRows }, { data: templateRows }] = await Promise.all([
+                   uniqueSkillIds.length
+                     ? supabase.from('assessment_skills').select('id, name, area_id').in('id', uniqueSkillIds)
+                     : Promise.resolve({ data: [] }),
+                   supabase.from('curriculum_areas').select('id, name'),
+                   uniqueTemplateIds.length
+                     ? supabase.from('assessment_templates').select('id, title, default_date').in('id', uniqueTemplateIds)
+                     : Promise.resolve({ data: [] }),
+                 ]);
+
+                 const skillMap = new Map((assessmentSkillRows || []).map((row) => [String(row.id), row]));
+                 const areaMap = new Map((curriculumAreaRows || []).map((row) => [String(row.id), row.name]));
+                 const assessmentMap = new Map((assessRes.data || []).map((row) => [String(row.id), row]));
+                 const templateMap = new Map((templateRows || []).map((row) => [String(row.id), row]));
+
+                 const comments = commentRows
+                   .map((row) => {
+                     const assessment = assessmentMap.get(String(row.assessment_id));
+                     const skill = skillMap.get(String(row.skill_id));
+                     const template = templateMap.get(String(assessment?.template_id));
+                     return {
+                       id: row.id,
+                       area: areaMap.get(String(skill?.area_id)) || 'General',
+                       skill: skill?.name || 'Uncategorized Skill',
+                       comment: String(row.comment || '').trim(),
+                       assessmentTitle: template?.title || 'Assessment',
+                       date: row.created_at || assessment?.created_at || template?.default_date || null,
+                     };
+                   })
+                   .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+                   .slice(0, 16);
+
+                 setAssessmentComments(comments);
+               } else {
+                 setAssessmentComments([]);
+               }
+           } else {
+             setWeakestSkills([]);
+             setAssessmentComments([]);
            }
+        } else {
+          setWeakestSkills([]);
+          setAssessmentComments([]);
         }
       } catch (err) { console.error(err); }
     };
@@ -526,7 +575,7 @@ const todayTcSummary = useMemo(() => {
   return grouped; // shape: { INTRODUCED: { Area: { Cat: { Activity: [notes] }}} , PRACTICED: ... }
 }, [tcData, tcDataRaw, student]);
 
-const otherTeacherNotes = useMemo(() => {
+  const otherTeacherNotes = useMemo(() => {
   const isOther = (m) => {
     const flag = String(m?.status || m?.type || '').trim().toLowerCase();
     return flag === 'other';
@@ -537,6 +586,16 @@ const otherTeacherNotes = useMemo(() => {
     .sort((a, b) => new Date(b.date || b.created_at).getTime() - new Date(a.date || a.created_at).getTime())
     .slice(0, 12);
 }, [manualObservationsDashboard]);
+
+  const assessmentCommentsByArea = useMemo(() => {
+    return assessmentComments.reduce((groups, item) => {
+      const area = item.area || 'General';
+      if (!groups[area]) groups[area] = [];
+      groups[area].push(item);
+      return groups;
+    }, {});
+  }, [assessmentComments]);
+
   const toggleActionStatus = async (item) => {
     const isDoneNow = item.done; 
     
@@ -724,6 +783,52 @@ const otherTeacherNotes = useMemo(() => {
 {/* 2B. TEACHER NOTES (OTHER) — separate card below */}
 
       </div>
+
+      <ThemedCard style={{ padding: 24 }} accentColor={UI.accentSlate}>
+        <SectionHeader icon={Eye} title="Assessment Observations" />
+        {assessmentComments.length === 0 ? (
+          <div style={{ fontSize: 13, color: UI.muted, fontStyle: 'italic' }}>
+            No written assessment observations found for this student.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {Object.entries(assessmentCommentsByArea)
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([area, items]) => {
+              const subjectStyle = getSubjectStyle(area);
+              return (
+                <div key={area} style={{ border: `1px solid ${UI.border}`, borderLeft: `4px solid ${subjectStyle.accent}`, background: '#fff' }}>
+                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${UI.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', background: rgba(subjectStyle.accent, 0.06) }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: subjectStyle.accent }} />
+                      <span style={{ fontSize: 11, fontWeight: 800, color: UI.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{area}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: UI.muted, fontWeight: 700 }}>
+                      {items.length} observation{items.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 0 }}>
+                    {items.map((item, index) => (
+                      <div key={item.id} style={{ padding: '14px 16px', borderTop: index === 0 ? 'none' : `1px solid ${UI.border}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: UI.text }}>{item.skill}</div>
+                          <div style={{ fontSize: 11, color: UI.muted, fontWeight: 600 }}>
+                            {item.assessmentTitle}{item.date ? ` • ${formatShortDate(item.date)}` : ''}
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 13, color: UI.text, lineHeight: 1.5 }}>
+                          {item.comment}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ThemedCard>
 
       {/* 3. FOLLOW-UP ITEMS (Grouped by Area) */}
       <ThemedCard style={{ padding: 0, overflow: 'hidden' }} accentColor={UI.accentTeal}>
@@ -1180,8 +1285,9 @@ const ProgressMatrix = ({ student, showToast }) => {
   
   const [search, setSearch] = useState('');
   const [filterArea, setFilterArea] = useState('ALL');
+  const [filterDate, setFilterDate] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL'); 
-  const [globalExpanded, setGlobalExpanded] = useState(null); 
+  const [globalExpanded, setGlobalExpanded] = useState(true); 
 
   useEffect(() => {
     const fetchFullHistory = async () => {
@@ -1222,9 +1328,25 @@ const ProgressMatrix = ({ student, showToast }) => {
 
   const uniqueAreas = useMemo(() => [...new Set(data.map(d => d.area_name).filter(Boolean))].sort(), [data]);
 
+  const dateFilteredData = useMemo(() => {
+    if (filterDate === 'ALL') return data;
+    const days = Number(filterDate);
+    if (!Number.isFinite(days)) return data;
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - (days - 1));
+    return data.filter((item) => {
+      const value = item.observation_date || item.date;
+      if (!value) return false;
+      const dt = toDateObj(value);
+      dt.setHours(0, 0, 0, 0);
+      return dt >= cutoff;
+    });
+  }, [data, filterDate]);
+
   const filteredTreeData = useMemo(() => {
     const latestStatusMap = {};
-    data.forEach(item => {
+    dateFilteredData.forEach(item => {
       const area = item.area_name || 'General';
       const cat = item.category_name || 'General';
       const lesson = item.activity_name || 'Activity';
@@ -1258,7 +1380,16 @@ const ProgressMatrix = ({ student, showToast }) => {
     });
 
     return root;
-  }, [data, search, filterArea, filterStatus]);
+  }, [dateFilteredData, search, filterArea, filterStatus]);
+
+  const hasActiveFilters = search.trim() || filterArea !== 'ALL' || filterDate !== 'ALL' || filterStatus !== 'ALL';
+
+  const clearFilters = () => {
+    setSearch('');
+    setFilterArea('ALL');
+    setFilterDate('ALL');
+    setFilterStatus('ALL');
+  };
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: UI.muted }}>Loading...</div>;
 
@@ -1273,44 +1404,60 @@ const ProgressMatrix = ({ student, showToast }) => {
           <Field as="select" value={filterArea} onChange={e => setFilterArea(e.target.value)} style={{ width: 160 }}>
             <option value="ALL">All Areas</option>{uniqueAreas.map(a => <option key={a} value={a}>{a}</option>)}
           </Field>
-          
-          {/* Status Pills */}
-          <div style={{ display: 'flex', gap: 6, background: '#f8fafc', padding: 4, borderRadius: 8, border: `1px solid ${UI.border}` }}>
-            {[
-              { id: 'ALL', label: 'All Statuses' },
-              { id: 'INTRODUCED', label: 'Introduced' },
-              { id: 'PRACTICED', label: 'Practiced' },
-              { id: 'MASTERED', label: 'Mastered' },
-              { id: 'REWORK', label: 'Needs Review' }
-            ].map(s => (
-              <button
-                key={s.id}
-                onClick={() => setFilterStatus(s.id)}
-                style={{
-                  padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                  border: 'none', transition: 'all 0.15s',
-                  background: filterStatus === s.id ? UI.primary : 'transparent',
-                  color: filterStatus === s.id ? '#fff' : UI.muted
-                }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <Field as="select" value={filterDate} onChange={e => setFilterDate(e.target.value)} style={{ width: 170 }}>
+            <option value="ALL">All Dates</option>
+            <option value="30">Last 30 Days</option>
+            <option value="90">Last 90 Days</option>
+            <option value="365">Last 12 Months</option>
+          </Field>
+
+          <Button
+            variant="ghost"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+            style={{
+              height: 38,
+              border: `1px solid ${UI.border}`,
+              color: hasActiveFilters ? UI.primary : UI.muted,
+              opacity: hasActiveFilters ? 1 : 0.55,
+              cursor: hasActiveFilters ? 'pointer' : 'default'
+            }}
+          >
+            <Undo2 size={14} />
+            Clear Filters
+          </Button>
 
           <div style={{ borderLeft: `1px solid ${UI.border}`, height: 24, margin: '0 8px' }} />
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="ghost" onClick={() => setGlobalExpanded(true)} style={{ height: 32, fontSize: 11 }}>Expand All</Button>
-            <Button variant="ghost" onClick={() => setGlobalExpanded(false)} style={{ height: 32, fontSize: 11 }}>Collapse All</Button>
+            <Button variant="ghost" onClick={() => setGlobalExpanded(prev => !prev)} style={{ height: 32, fontSize: 11 }}>
+              {globalExpanded ? 'Collapse All' : 'Expand All'}
+            </Button>
           </div>
         </div>
       </ThemedCard>
 
       <div style={{ display: 'flex', gap: 16, padding: '0 8px', flexWrap: 'wrap' }}>
         {['INTRODUCED', 'PRACTICED', 'MASTERED', 'REWORK'].map(s => (
-          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: UI.muted, fontWeight: 600 }}>
-            <ProgressMarker status={s} /> {s === 'REWORK' ? 'NEEDS REVIEW' : s}
-          </div>
+          <button
+            key={s}
+            onClick={() => setFilterStatus((prev) => prev === s ? 'ALL' : s)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              color: filterStatus === s ? UI.primary : UI.muted,
+              fontWeight: 600,
+              background: 'transparent',
+              border: 'none',
+              padding: '4px 0',
+              cursor: 'pointer'
+            }}
+            title={filterStatus === s ? 'Clear status filter' : `Filter by ${s === 'REWORK' ? 'Needs Review' : s}`}
+          >
+            <ProgressMarker status={s} />
+            {s === 'REWORK' ? 'NEEDS REVIEW' : s}
+          </button>
         ))}
       </div>
 
@@ -1508,7 +1655,7 @@ const HexAvatar = ({ letter, size = 66, fontSize = 22 }) => (
 );
 
 const StudentTile = ({ student, onClick }) => (
-  <div onClick={onClick} style={{ background: '#fff', border: `1px solid ${UI.border}`, borderRadius: SQUARE_RADIUS, padding: 24, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s ease', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }} onMouseEnter={(e) => { e.currentTarget.style.transform = 'translate(-1px, -1px)'; e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.05)'; e.currentTarget.style.borderColor = UI.primary; }} onMouseLeave={(e) => { e.currentTarget.style.transform = 'translate(0)'; e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.02)'; e.currentTarget.style.borderColor = UI.border; }}>
+  <div onClick={onClick} style={{ background: '#fff', border: `1px solid ${UI.border}`, borderRadius: SQUARE_RADIUS, padding: 24, cursor: 'pointer', textAlign: 'center', transition: 'box-shadow 0.2s ease, border-color 0.2s ease', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }} onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.05)'; e.currentTarget.style.borderColor = UI.primary; }} onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.02)'; e.currentTarget.style.borderColor = UI.border; }}>
     <div style={{ marginBottom: 16 }}><HexAvatar letter={(student.first_name || '?')[0]} /></div>
     <div style={{ fontWeight: 600, fontSize: 16, color: UI.primary }}>{student.first_name} {student.last_name}</div>
   </div>
@@ -1644,7 +1791,7 @@ const IndividualPlanner = ({ profile, forcedStudentId, students, planItems, mast
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: '#fff', padding: 6, borderRadius: SQUARE_RADIUS, border: `1px solid ${UI.border}` }}>
           <ViewToggle active={tab === 'DASHBOARD'} icon={LayoutDashboard} label="Dashboard" onClick={() => setTab('DASHBOARD')} />
           <ViewToggle active={tab === 'ACTIVITY'} icon={List} label="Activity Log" onClick={() => setTab('ACTIVITY')} />
-          <ViewToggle active={tab === 'MATRIX'} icon={History} label="Curriculum Matrix" onClick={() => setTab('MATRIX')} />
+          <ViewToggle active={tab === 'MATRIX'} icon={History} label="Progress Overview" onClick={() => setTab('MATRIX')} />
           <ViewToggle active={tab === 'ASSESS'} icon={CheckCircle} label="Assessments" onClick={() => setTab('ASSESS')} />
         </div>
         

@@ -1,13 +1,14 @@
 import { THEME } from '../../ui/theme';
 
-export default function NavItem({ label, active, onClick, hint }) {
+export default function NavItem({ icon, label, active, onClick, hint, centered = false, hideLabel = false }) {
   return (
     <button
       onClick={onClick}
+      title={label || ''}
       style={{
         width: '100%',
-        textAlign: 'left',
-        padding: '16px 24px', 
+        textAlign: centered ? 'center' : 'left',
+        padding: centered ? '14px 12px' : '16px 24px',
         margin: '0',
         borderRadius: 0,
         border: 'none',
@@ -18,16 +19,17 @@ export default function NavItem({ label, active, onClick, hint }) {
         fontWeight: active ? 700 : 500,
         fontSize: '16px', 
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: centered ? 'center' : 'space-between',
         alignItems: 'center',
         gap: 12,
         transition: 'all 0.2s',
       }}
     >
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
-        {label}
+        {icon && <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>}
+        {!hideLabel && label}
       </span>
-      {hint && (
+      {!centered && hint && (
         <span style={{ fontSize: 10, opacity: 0.8, fontWeight: 600, background: THEME.brandAccent, padding: '2px 6px', borderRadius: 4, color: THEME.text }}>
           {hint}
         </span>
