@@ -294,8 +294,8 @@ const ViewTab = ({ active, icon: Icon, label, onClick }) => (
 );
 
 const ViewToggle = ({ active, icon: Icon, label, onClick }) => (
-  <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: R, border: `1px solid ${active ? UI.primary : 'transparent'}`, background: active ? UI.primary : 'transparent', color: active ? '#fff' : UI.muted, fontSize: 13, fontWeight: active ? 600 : 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none', height: '36px' }}>
-    {Icon ? <Icon size={16} color={active ? '#fff' : UI.muted} /> : null} {label}
+  <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: R, border: '1px solid ' + (active ? rgba(UI.primary, 0.16) : 'transparent'), background: active ? '#fff' : 'transparent', color: active ? UI.primary : UI.muted, fontSize: 13, fontWeight: active ? 700 : 600, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: THEME.sansFont, userSelect: 'none', height: '38px', boxShadow: active ? '0 1px 2px rgba(15, 23, 42, 0.06)' : 'none' }}>
+    {Icon ? <Icon size={16} color={active ? UI.primary : UI.muted} /> : null} {label}
   </button>
 );
 
@@ -1350,26 +1350,26 @@ if (timeFrame === 'DAY') {
             icon={History}
             title="Activity Timeline"
             primaryControls={(
-              <DateRangeControl
-                timeFrame={timeFrame}
-                onTimeFrameChange={setTimeFrame}
-                onPrev={handlePrevDate}
-                onNext={handleNextDate}
-                onToday={() => setActiveDate(new Date())}
-                dateLabel={dateLabel}
-              />
-            )}
-            secondaryControls={(
-              <>
-                <div style={{ display: 'flex', background: '#f8fafc', padding: 4, borderRadius: R, border: `1px solid ${UI.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', width: '100%' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#F5F7FA', padding: 4, borderRadius: R, border: '1px solid ' + UI.border }}>
                   <ViewToggle active={timelineFormat === 'KANBAN'} icon={Columns} label="Board View" onClick={() => setTimelineFormat('KANBAN')} />
                   <ViewToggle active={timelineFormat === 'LIST'} icon={List} label="List View" onClick={() => setTimelineFormat('LIST')} />
                 </div>
-                <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 36, fontSize: 12, border: `1px solid ${UI.border}` }}>
-                  {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
-                  {expandAll ? 'Collapse All' : 'Expand All'}
-                </Button>
-              </>
+                <DateRangeControl
+                  timeFrame={timeFrame}
+                  onTimeFrameChange={setTimeFrame}
+                  onPrev={handlePrevDate}
+                  onNext={handleNextDate}
+                  onToday={() => setActiveDate(new Date())}
+                  dateLabel={dateLabel}
+                />
+              </div>
+            )}
+            secondaryControls={(
+              <Button variant="ghost" onClick={() => setExpandAll(!expandAll)} style={{ height: 36, fontSize: 12, border: '1px solid ' + UI.border, background: '#fff' }}>
+                {expandAll ? <Minimize2 size={12}/> : <Maximize2 size={12}/>}
+                {expandAll ? 'Collapse All' : 'Expand All'}
+              </Button>
             )}
           />
         )}
