@@ -456,8 +456,16 @@ const StatusLabelBadge = ({ status }) => {
     'MASTERED': { bg: '#F8FAFC', color: '#233876', label: 'Mastered', border: '#E2E8F0' },
     'REWORK': { bg: '#FEF2F2', color: '#E53935', label: 'Needs Review', border: '#FECACA' }
   };
-  const c = config[String(status || '').toUpperCase()];
-  if (!c) return null;
+  const normalized = String(status || '').toUpperCase();
+  const c = config[normalized];
+  if (!c) {
+    if (!normalized) return null;
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 108, background: '#F8FAFC', color: '#64748B', padding: '5px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700, border: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>
+        {normalized === 'OTHER' ? 'Other' : normalized}
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 108, background: c.bg, color: c.color, padding: '5px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700, border: `1px solid ${c.border}`, whiteSpace: 'nowrap' }}>
       {c.label}
@@ -549,6 +557,7 @@ const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
 
   // Data
   const [fullMatrixData, setFullMatrixData] = useState([]); 
+  const [tcGridStatuses, setTcGridStatuses] = useState([]);
   const [studentsByTcId, setStudentsByTcId] = useState({});
   const [studentsList, setStudentsList] = useState([]);
   const [classrooms, setClassrooms] = useState([]);
@@ -647,6 +656,28 @@ useEffect(() => {
             setClassrooms(clsData.filter(c => !c.name.toUpperCase().includes('KG TEST')));
         }
 
+        const allStudentTcIds = (students || [])
+          .map((s) => String(s.tc_id || '').trim())
+          .filter(Boolean);
+
+        const gridTargetStudentIds = selectedStudentTcId
+          ? [String(selectedStudentTcId)]
+          : allStudentTcIds;
+
+        const gridRows = [];
+        const gridChunkSize = selectedStudentTcId ? 1 : 2;
+        for (let i = 0; i < gridTargetStudentIds.length; i += gridChunkSize) {
+          const chunk = gridTargetStudentIds.slice(i, i + gridChunkSize);
+          const gridRes = await supabase
+            .from('tc_grid_statuses')
+            .select('child_tc_id, lesson_tc_id, derived_status')
+            .in('child_tc_id', chunk)
+            .limit(5000);
+          if (gridRes.error) throw gridRes.error;
+          gridRows.push(...(gridRes.data || []));
+        }
+        setTcGridStatuses(gridRows);
+
         // Fetch everything to enable fast local date toggling
         const matrixRes = await supabase
             .from('vw_tc_observations_enriched')
@@ -676,6 +707,35 @@ useEffect(() => {
             const rawMatrixMap = new Map();
             rawRows.forEach(r => { if (r.tc_observation_id) rawMatrixMap.set(String(r.tc_observation_id), r); });
 
+            const gridStatusByStudentLesson = new Map();
+            (tcGridStatuses.length ? tcGridStatuses : gridRows).forEach((row) => {
+              const childTcId = String(row.child_tc_id || '').trim();
+              const lessonTcId = String(row.lesson_tc_id || '').trim();
+              if (!childTcId || !lessonTcId) return;
+              let status = row.derived_status || null;
+              if (status === 'MASTERED') status = 'PRACTICED';
+              gridStatusByStudentLesson.set(`${childTcId}::${lessonTcId}`, status);
+            });
+
+            const resolveGridStatus = (childIds, lessonTcId) => {
+              const lessonId = String(lessonTcId || '').trim();
+              if (!lessonId) return null;
+              const ids = (Array.isArray(childIds) ? childIds : [])
+                .map((value) => String(value || '').trim())
+                .filter(Boolean);
+              if (ids.length === 0) return null;
+              const statuses = Array.from(new Set(
+                ids
+                  .map((childId) => gridStatusByStudentLesson.get(`${childId}::${lessonId}`))
+                  .filter(Boolean)
+              ));
+              if (statuses.length === 1) return statuses[0];
+              if (selectedStudentTcId) {
+                return gridStatusByStudentLesson.get(`${String(selectedStudentTcId)}::${lessonId}`) || null;
+              }
+              return null;
+            };
+
             const procMatrix = [];
             (matrixRes.data || []).forEach(tc => {
                 const id = tc.tc_observation_id || tc.id;
@@ -690,13 +750,31 @@ useEffect(() => {
                   ? actName.split('•').map(s => s.trim()).filter(Boolean)
                   : [tc.activity_name || 'Activity'];
 
-                names.forEach(name => {
-                    procMatrix.push({
-                      ...tc,
-                      activity_name: name,
-                      bucket: tc.bucket || inferBucket(tc.note || raw.text_content),
-                      raw_html: raw.html_content || '',
-                      raw_text: raw.text_content || ''
+                const lessonIds = Array.from(String(raw.text_content || '').matchAll(/\[lesson_(\d+)\]/g)).map((match) => String(match[1]));
+                names.forEach((name, index) => {
+                    const bucket = tc.bucket || inferBucket(tc.note || raw.text_content);
+                    const lessonTcId = lessonIds[index] || (lessonIds.length === 1 ? lessonIds[0] : null);
+                    const childTcIds = Array.isArray(tc.child_tc_ids) && tc.child_tc_ids.length > 0
+                      ? tc.child_tc_ids
+                      : (tc.child_tc_id ? [tc.child_tc_id] : []);
+                    const targetChildIds = childTcIds.length > 0 ? childTcIds : [null];
+
+                    targetChildIds.forEach((childTcId) => {
+                      const rowChildIds = childTcId ? [childTcId] : [];
+                      const currentGridStatus = resolveGridStatus(rowChildIds, lessonTcId);
+                      const effectiveStatus = (bucket === 'OTHER' || !bucket) ? (currentGridStatus || bucket || 'OTHER') : bucket;
+                      procMatrix.push({
+                        ...tc,
+                        child_tc_id: childTcId || tc.child_tc_id || null,
+                        child_tc_ids: rowChildIds,
+                        activity_name: name,
+                        bucket,
+                        effective_status: effectiveStatus,
+                        lesson_tc_id: lessonTcId,
+                        current_grid_status: currentGridStatus,
+                        raw_html: raw.html_content || '',
+                        raw_text: raw.text_content || ''
+                      });
                     });
                 });
             });
@@ -714,7 +792,7 @@ useEffect(() => {
       }
     };
     load();
-  }, []);
+  }, [selectedStudentTcId]);
 
   // Filter helpers
   const studentsForSearch = useMemo(() => {
@@ -805,7 +883,7 @@ useEffect(() => {
           const areaName = translate(r.area_name || 'General');
           const categoryName = translate(r.category_name || 'Uncategorized');
           const activityName = translate(r.activity_name || 'Untitled Activity');
-          const bucket = r.bucket;
+          const bucket = r.effective_status || r.current_grid_status || r.bucket;
 
           const key = `${bucket}||${areaName}||${categoryName}||${activityName}`;
           
@@ -856,7 +934,7 @@ useEffect(() => {
       
       (dateFilteredData || []).forEach(r => {
           const obsId = String(r.tc_observation_id || r.id);
-          const bucket = r.bucket;
+          const bucket = r.effective_status || r.current_grid_status || r.bucket;
           const noteLower = String(r.note || '').toLowerCase();
           
           if (bucket === 'REWORK' || noteLower.includes('need practice') || noteLower.includes('needs practice')) {
@@ -965,7 +1043,7 @@ if (actName && existing.detail && existing.detail !== actName) {
     analyticsRows.forEach((row) => {
       const area = translate(row.area_name || 'General');
       const activity = translate(row.activity_name || 'Untitled Activity');
-      const bucket = String(row.bucket || 'INTRODUCED').toUpperCase();
+      const bucket = String(row.effective_status || row.current_grid_status || row.bucket || 'INTRODUCED').toUpperCase();
       byArea.set(area, (byArea.get(area) || 0) + 1);
       byActivity.set(activity, (byActivity.get(activity) || 0) + 1);
       if (status[bucket] != null) status[bucket] += 1;
@@ -1440,7 +1518,7 @@ if (timeFrame === 'DAY') {
           <div style={{ fontSize: 12, color: UI.text }}>{item.area_name}</div>
           <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.35 }}>{item.activity_name || 'Untitled Activity'}</div>
           <div>
-            <StatusLabelBadge status={item.bucket || inferBucket(item.note || item.raw_text)} />
+            <StatusLabelBadge status={item.effective_status || item.current_grid_status || item.bucket || inferBucket(item.note || item.raw_text)} />
           </div>
         </div>
       )

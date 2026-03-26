@@ -885,6 +885,7 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
   const [viewMode, setViewMode] = useState('BOARD'); // 'BOARD' or 'LIST'
   const [tcData, setTcData] = useState([]);
   const [tcDataRaw, setTcDataRaw] = useState([]);
+  const [tcGridStatuses, setTcGridStatuses] = useState([]);
   const [manualObservations, setManualObservations] = useState([]);
   const [loading, setLoading] = useState(false);
   
@@ -915,19 +916,24 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
 
         let tcPromise = Promise.resolve({ data: [] });
         let tcRawPromise = Promise.resolve({ data: [] });
+        let tcGridPromise = Promise.resolve({ data: [] });
 
         if (student.tc_id) {
           tcPromise = supabase.from('vw_tc_observations_enriched')
             .select('*').eq('child_tc_id', student.tc_id).gte('observation_date', start).lte('observation_date', end).order('observation_date', { ascending: false });
           tcRawPromise = supabase.from('vw_tc_observations_expanded')
             .select('tc_observation_id, html_content, text_content').eq('child_tc_id', student.tc_id).gte('observation_date', start).lte('observation_date', end);
+          tcGridPromise = supabase.from('tc_grid_statuses')
+            .select('lesson_tc_id, derived_status')
+            .eq('child_tc_id', student.tc_id);
         }
 
-        const [obsRes, tcRes, tcRawRes] = await Promise.all([obsPromise, tcPromise, tcRawPromise]);
+        const [obsRes, tcRes, tcRawRes, tcGridRes] = await Promise.all([obsPromise, tcPromise, tcRawPromise, tcGridPromise]);
         
         setManualObservations(obsRes.data || []);
         setTcData(tcRes?.data || []);
         setTcDataRaw(tcRawRes?.data || []);
+        setTcGridStatuses(tcGridRes?.data || []);
 
       } catch (err) {
         console.error(err);
@@ -942,6 +948,15 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
   const { processedTc } = useMemo(() => {
   const rawMap = new Map();
   tcDataRaw.forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
+
+  const gridStatusByLessonId = new Map();
+  tcGridStatuses.forEach((row) => {
+    const lessonId = String(row.lesson_tc_id || '').trim();
+    if (!lessonId) return;
+    let status = row.derived_status || null;
+    if (status === 'MASTERED') status = 'PRACTICED';
+    gridStatusByLessonId.set(lessonId, status);
+  });
 
   const pTc = [];
   const pMap = new Map();
@@ -959,9 +974,13 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
     });
     const bucket = tc.bucket || inferTcBucket(tc.note || raw.text_content);
     const names = splitActivityNames(actName, tc.activity_name || 'Activity');
+    const lessonIds = Array.from(String(raw.text_content || '').matchAll(/\[lesson_(\d+)\]/g)).map((match) => String(match[1]));
 
     names.forEach((name, index) => {
       const entryKey = `${id}-${index}-${name}`;
+      const lessonTcId = lessonIds[index] || (lessonIds.length === 1 ? lessonIds[0] : null);
+      const currentGridStatus = lessonTcId ? (gridStatusByLessonId.get(String(lessonTcId)) || null) : null;
+      const effectiveStatus = (bucket === 'OTHER' || !bucket) ? (currentGridStatus || bucket || 'OTHER') : bucket;
       const item = {
         ...tc,
         id: entryKey,
@@ -970,6 +989,9 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
         activity_name: name,
         cleanedNote,
         bucket,
+        effective_status: effectiveStatus,
+        lesson_tc_id: lessonTcId,
+        current_grid_status: currentGridStatus,
         _raw_html: raw.html_content || '',
       };
 
@@ -980,7 +1002,7 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
   });
 
   return { processedTc: pTc };
-}, [tcData, tcDataRaw, student]);
+}, [tcData, tcDataRaw, tcGridStatuses, student]);
 
   const uniqueAreas = useMemo(
   () => [...new Set(processedTc.map(t => t.area_name).filter(Boolean))].sort(),
@@ -1001,7 +1023,7 @@ const uniqueCategories = useMemo(
     if (filterArea !== 'ALL' && tc.area_name !== filterArea) return false;
     if (filterCategory !== 'ALL' && tc.category_name !== filterCategory) return false;
     if (filterStatus !== 'ALL') {
-        const b = tc.bucket || 'INTRODUCED';
+        const b = tc.effective_status || tc.bucket || 'INTRODUCED';
         if (filterStatus === 'I' && b !== 'INTRODUCED') return false;
         if (filterStatus === 'P' && b !== 'PRACTICED') return false;
         if (filterStatus === 'N' && b !== 'REWORK' && !String(tc.note).toLowerCase().includes('need')) return false;
@@ -1156,9 +1178,9 @@ const KanbanColumn = ({ title, color, count, items }) => {
       {/* Conditional Rendering of Views */}
       {viewMode === 'BOARD' ? (
         <div style={{ display: 'flex', gap: 20, overflowX: 'auto', paddingBottom: 10 }}>
-          <KanbanColumn title="Introduced" color="#1E88E5" count={filteredTc.filter(t => t.bucket === 'INTRODUCED').length} items={filteredTc.filter(t => t.bucket === 'INTRODUCED')} />
-          <KanbanColumn title="Practiced" color="#F5B041" count={filteredTc.filter(t => t.bucket === 'PRACTICED').length} items={filteredTc.filter(t => t.bucket === 'PRACTICED')} />
-          <KanbanColumn title="Needs Review" color="#E53935" count={filteredTc.filter(t => t.bucket === 'REWORK' || String(t.note).toLowerCase().includes('need')).length} items={filteredTc.filter(t => t.bucket === 'REWORK' || String(t.note).toLowerCase().includes('need'))} />
+          <KanbanColumn title="Introduced" color="#1E88E5" count={filteredTc.filter(t => t.effective_status === 'INTRODUCED').length} items={filteredTc.filter(t => t.effective_status === 'INTRODUCED')} />
+          <KanbanColumn title="Practiced" color="#F5B041" count={filteredTc.filter(t => t.effective_status === 'PRACTICED').length} items={filteredTc.filter(t => t.effective_status === 'PRACTICED')} />
+          <KanbanColumn title="Needs Review" color="#E53935" count={filteredTc.filter(t => t.effective_status === 'REWORK' || String(t.note).toLowerCase().includes('need')).length} items={filteredTc.filter(t => t.effective_status === 'REWORK' || String(t.note).toLowerCase().includes('need'))} />
         </div>
       ) : (
         <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
@@ -1197,9 +1219,9 @@ const KanbanColumn = ({ title, color, count, items }) => {
         {o.category_name || '—'}
       </div>
 
-      {/* STATUS from bucket */}
+      {/* STATUS from effective status */}
       <div>
-        <StatusBadge status={bucketToLabel(o.bucket)} />
+        <StatusBadge status={bucketToLabel(o.effective_status || o.bucket)} />
       </div>
 
       {/* WITH from HTML */}
@@ -1290,32 +1312,114 @@ const ProgressMatrix = ({ student, showToast }) => {
   const [globalExpanded, setGlobalExpanded] = useState(true); 
 
   useEffect(() => {
-    const fetchFullHistory = async () => {
-      if (!student?.tc_id) return;
+    const fetchProgressData = async () => {
+      if (!student?.tc_id) {
+        setData([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       try {
-        const [resEnriched, resRaw] = await Promise.all([
-          supabase.from('vw_tc_observations_enriched').select('*').eq('child_tc_id', student.tc_id).order('observation_date', { ascending: true }),
-          supabase.from('vw_tc_observations_expanded').select('tc_observation_id, html_content, text_content').eq('child_tc_id', student.tc_id)
+        const [gridRes, resEnriched, resRaw] = await Promise.all([
+          supabase
+            .from('tc_grid_statuses')
+            .select('lesson_tc_id, lesson_name, category_name, area_name, derived_status, synced_at')
+            .eq('child_tc_id', student.tc_id)
+            .order('area_name', { ascending: true })
+            .order('category_name', { ascending: true })
+            .order('lesson_name', { ascending: true }),
+          supabase
+            .from('vw_tc_observations_enriched')
+            .select('*')
+            .eq('child_tc_id', student.tc_id)
+            .order('observation_date', { ascending: true }),
+          supabase
+            .from('vw_tc_observations_expanded')
+            .select('tc_observation_id, observation_date, html_content, text_content')
+            .eq('child_tc_id', student.tc_id)
         ]);
+
+        if (gridRes.error) throw gridRes.error;
         if (resEnriched.error) throw resEnriched.error;
         if (resRaw.error) throw resRaw.error;
 
+        const normalizeKey = (value) => String(value || '').trim().toLowerCase();
         const rawMap = new Map();
-        (resRaw.data || []).forEach(r => { if (r.tc_observation_id) rawMap.set(String(r.tc_observation_id), r); });
+        (resRaw.data || []).forEach((row) => {
+          if (row.tc_observation_id) rawMap.set(String(row.tc_observation_id), row);
+        });
 
-        const processed = [];
-        (resEnriched.data || []).forEach(tc => {
-          const id = tc.tc_observation_id || tc.id;
-          const raw = rawMap.get(String(id)) || {};
-          const actName = extractLessonName({ html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name });
-          
-          const names = actName ? actName.split('•').map(s => s.trim()).filter(Boolean) : [tc.activity_name || 'Activity'];
-          names.forEach(name => {
-            processed.push({ ...tc, activity_name: name, bucket: tc.bucket || inferTcBucket(tc.note || raw.text_content) });
+        const latestActivityByLessonId = new Map();
+        const latestObservationByDisplayKey = new Map();
+
+        (resEnriched.data || []).forEach((tc) => {
+          const obsId = String(tc.tc_observation_id || tc.id || '');
+          const raw = rawMap.get(obsId) || {};
+          const readableText = String(raw.text_content || tc.note || '');
+          const bucket = tc.bucket || inferTcBucket(readableText);
+          const observationDate = tc.observation_date || tc.date || null;
+          const extractedName = extractLessonName({
+            html_content: raw.html_content,
+            text_content: raw.text_content,
+            activity_name: tc.activity_name,
+          });
+          const names = splitActivityNames(extractedName, tc.activity_name || 'Activity');
+          const lessonIds = Array.from(readableText.matchAll(/\[lesson_(\d+)\]/g)).map((match) => String(match[1]));
+
+          names.forEach((name, index) => {
+            const item = {
+              area_name: tc.area_name || 'General',
+              category_name: tc.category_name || 'General',
+              activity_name: name,
+              bucket,
+              observation_date: observationDate,
+            };
+            const displayKey = [item.area_name, item.category_name, item.activity_name].map(normalizeKey).join('|');
+            const currentDisplay = latestObservationByDisplayKey.get(displayKey);
+            if (!currentDisplay || String(item.observation_date || '') >= String(currentDisplay.observation_date || '')) {
+              latestObservationByDisplayKey.set(displayKey, item);
+            }
+
+            const lessonId = lessonIds[index] || (lessonIds.length === 1 ? lessonIds[0] : null);
+            if (lessonId) {
+              const currentLesson = latestActivityByLessonId.get(lessonId);
+              if (!currentLesson || String(item.observation_date || '') >= String(currentLesson.observation_date || '')) {
+                latestActivityByLessonId.set(lessonId, item);
+              }
+            }
           });
         });
-        setData(processed);
+
+        const gridRows = (gridRes.data || []).map((row) => {
+          const activity = latestActivityByLessonId.get(String(row.lesson_tc_id)) || null;
+          let status = row.derived_status || null;
+          if (activity?.bucket === 'REWORK') status = 'REWORK';
+          if (!status || status === 'UNSET' || status === 'PLANNED') status = activity?.bucket || null;
+          if (status === 'MASTERED') status = 'PRACTICED';
+          if (status !== 'INTRODUCED' && status !== 'PRACTICED' && status !== 'REWORK') return null;
+
+          return {
+            lesson_tc_id: row.lesson_tc_id || null,
+            area_name: row.area_name || activity?.area_name || 'General',
+            category_name: row.category_name || activity?.category_name || 'General',
+            activity_name: row.lesson_name || activity?.activity_name || 'Activity',
+            bucket: status,
+            observation_date: activity?.observation_date || null,
+            synced_at: row.synced_at || null,
+          };
+        }).filter(Boolean);
+
+        const gridDisplayKeys = new Set(
+          gridRows.map((item) => [item.area_name, item.category_name, item.activity_name].map(normalizeKey).join('|'))
+        );
+
+        const activityOnlyRows = Array.from(latestObservationByDisplayKey.entries())
+          .filter(([key]) => !gridDisplayKeys.has(key))
+          .map(([, item]) => ({ ...item, lesson_tc_id: null, synced_at: null }))
+          .filter((item) => item.bucket === 'INTRODUCED' || item.bucket === 'PRACTICED' || item.bucket === 'REWORK');
+
+        setData(gridRows.length > 0 ? [...gridRows, ...activityOnlyRows] : activityOnlyRows);
       } catch (err) {
         console.error(err);
         showToast?.({ type: 'error', message: 'Failed to load historical progress.' });
@@ -1323,7 +1427,7 @@ const ProgressMatrix = ({ student, showToast }) => {
         setLoading(false);
       }
     };
-    fetchFullHistory();
+    fetchProgressData();
   }, [student?.tc_id, showToast]);
 
   const uniqueAreas = useMemo(() => [...new Set(data.map(d => d.area_name).filter(Boolean))].sort(), [data]);
@@ -1352,11 +1456,9 @@ const ProgressMatrix = ({ student, showToast }) => {
       const lesson = item.activity_name || 'Activity';
       if (!latestStatusMap[area]) latestStatusMap[area] = {};
       if (!latestStatusMap[area][cat]) latestStatusMap[area][cat] = {};
-      
-      // Store object with date alongside status
       latestStatusMap[area][cat][lesson] = {
-          status: item.bucket || 'INTRODUCED',
-          date: item.observation_date || item.date
+        status: item.bucket || 'INTRODUCED',
+        date: item.observation_date || item.date || item.synced_at || null
       };
     });
 
@@ -1373,7 +1475,7 @@ const ProgressMatrix = ({ student, showToast }) => {
           if (matchesSearch && matchesArea && matchesStatus) {
             if (!root[area]) root[area] = {};
             if (!root[area][cat]) root[area][cat] = {};
-            root[area][cat][lesson] = dataObj; // Assign the object
+            root[area][cat][lesson] = dataObj;
           }
         });
       });
@@ -1437,7 +1539,7 @@ const ProgressMatrix = ({ student, showToast }) => {
       </ThemedCard>
 
       <div style={{ display: 'flex', gap: 16, padding: '0 8px', flexWrap: 'wrap' }}>
-        {['INTRODUCED', 'PRACTICED', 'MASTERED', 'REWORK'].map(s => (
+        {['INTRODUCED', 'PRACTICED', 'REWORK'].map(s => (
           <button
             key={s}
             onClick={() => setFilterStatus((prev) => prev === s ? 'ALL' : s)}

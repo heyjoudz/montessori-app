@@ -64,3 +64,17 @@ entrypoint = "./functions/sync-tc-observations/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/sync-tc-observations/*.html" ]
+
+
+[functions.debug-tc-levels]
+enabled = true
+verify_jwt = true
+import_map = "./functions/debug-tc-levels/deno.json"
+entrypoint = "./functions/debug-tc-levels/index.ts"
+
+
+[functions.sync-tc-grid-statuses]
+enabled = true
+verify_jwt = true
+import_map = "./functions/sync-tc-grid-statuses/deno.json"
+entrypoint = "./functions/sync-tc-grid-statuses/index.ts"
