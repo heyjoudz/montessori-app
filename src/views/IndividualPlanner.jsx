@@ -87,6 +87,45 @@ const clean = (s) => String(s || '').trim();
 const iso10 = (v) => { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; };
 const parseId = (id) => id && id !== 'CUSTOM' ? Number(id) : null;
 const normKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const compareValues = (left, right, direction = 'asc') => {
+  const a = String(left ?? '').toLowerCase().trim();
+  const b = String(right ?? '').toLowerCase().trim();
+  if (a === b) return 0;
+  const result = a < b ? -1 : 1;
+  return direction === 'asc' ? result : -result;
+};
+const sortIndicator = (sortState, key) => {
+  if (sortState.key !== key) return '↕';
+  return sortState.direction === 'asc' ? '↑' : '↓';
+};
+
+const loadTeacherMetaByObservationIds = async (observationIds) => {
+  const ids = [...new Set((Array.isArray(observationIds) ? observationIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length === 0) return new Map();
+
+  const rows = [];
+  const chunkSize = 500;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const res = await supabase
+      .from('tc_observations')
+      .select('tc_observation_id, teacher_name, teacher_tc_id')
+      .in('tc_observation_id', chunk);
+    if (res.error) throw res.error;
+    rows.push(...(res.data || []));
+  }
+
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = String(row.tc_observation_id || '').trim();
+    if (!key) return;
+    map.set(key, {
+      teacher_name: row.teacher_name || null,
+      teacher_tc_id: row.teacher_tc_id || null,
+    });
+  });
+  return map;
+};
 
 const getBusinessDayISO = () => {
   const d = new Date();
@@ -158,8 +197,54 @@ const extractLessonName = (rec) => {
     }
     if (rec.activity_name) return rec.activity_name;
     const textToSearch = rec.note || rec.text_content || html.replace(/<[^>]+>/g, '');
-    const textMatch = textToSearch.match(/(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i);
-    return textMatch ? textMatch[1].trim() : 'General Activity';
+    const textMatch = textToSearch.match(/(?:practic(?:ed|e)|introduced(?:\s+to)?|mastered|re-?present(?:ed)?|needs more|needs practice|review(?:ed)?|worked with)\s+(.*?)(?:\.| but | worked | he | she |$)/i);
+    if (textMatch?.[1]) return textMatch[1].trim().replace(/\s+/g, ' ');
+    return 'General Activity';
+};
+
+const inferAreaAndCategoryFromActivity = (activityName) => {
+  const name = String(activityName || '').trim();
+  const lower = name.toLowerCase();
+  if (!name) return { area_name: 'General', category_name: 'General' };
+  if (/[\u0600-\u06ff]/.test(name)) return { area_name: 'Arabic Language', category_name: 'Arabic Language' };
+  if (/(spelling|cvc|sound|letter|phon|reading|waseca|word)/i.test(lower)) {
+    return { area_name: 'Language', category_name: 'Language' };
+  }
+  if (/(art|craft|theme activities|paper boat|airplane|cardboard car)/i.test(lower)) {
+    return { area_name: 'Culture', category_name: 'Art' };
+  }
+  return { area_name: 'General', category_name: 'General' };
+};
+
+const buildSyntheticTcObservation = (raw, childTcId = null) => {
+  const observationId = String(raw?.tc_observation_id || '').trim();
+  if (!observationId) return null;
+
+  const activityName = extractLessonName({
+    html_content: raw?.html_content,
+    text_content: raw?.text_content,
+  });
+  if (!activityName || activityName === 'General Activity') return null;
+
+  const bucket = inferTcBucket(raw?.text_content || raw?.html_content || '');
+  const meta = inferAreaAndCategoryFromActivity(activityName);
+
+  return {
+    id: `raw-${observationId}-${childTcId || 'na'}`,
+    tc_observation_id: observationId,
+    observation_date: raw?.observation_date || null,
+    child_tc_id: childTcId || raw?.child_tc_id || null,
+    child_tc_ids: childTcId || raw?.child_tc_id ? [String(childTcId || raw.child_tc_id)] : [],
+    activity_name: activityName,
+    area_name: meta.area_name,
+    category_name: meta.category_name,
+    bucket,
+    effective_status: bucket,
+    note: raw?.text_content || '',
+    teacher_name: raw?.teacher_name || null,
+    teacher_tc_id: raw?.teacher_tc_id || null,
+    _synthetic_from_raw: true,
+  };
 };
 
 const inferTcBucket = (text) => {
@@ -167,9 +252,18 @@ const inferTcBucket = (text) => {
     if (t.includes('reintroduced') || t.includes('re-introduced') || t.includes('re-present') || t.includes('represent') || 
         t.includes('needs more') || t.includes('need practice') || t.includes('needs practice') || t.includes('rework') || t.includes('needs review')
     ) return 'REWORK';
-    if (t.includes('practiced')) return 'PRACTICED';
+    if (t.includes('practiced') || t.includes('practicing') || t.includes('practice ') || t.includes('reviewed') || t.includes('review ')) return 'PRACTICED';
     if (t.includes('mastered')) return 'MASTERED';
     return 'INTRODUCED';
+};
+
+const resolveTcBucket = (existingBucket, text) => {
+  const inferredBucket = inferTcBucket(text);
+  const current = String(existingBucket || '').toUpperCase().trim();
+  if (!current) return inferredBucket;
+  if (current === 'INTRODUCED' && inferredBucket !== 'INTRODUCED') return inferredBucket;
+  if (current === 'OTHER') return inferredBucket || current;
+  return current;
 };
 
 // Aggressive, Centralized Note Cleaning Function
@@ -397,15 +491,27 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
         
         if (student.tc_id) {
           tcPromise = supabase.from('vw_tc_observations_enriched').select('*').eq('child_tc_id', student.tc_id).order('observation_date', { ascending: false }).limit(100);
-          tcRawPromise = supabase.from('vw_tc_observations_expanded').select('tc_observation_id, html_content, text_content').eq('child_tc_id', student.tc_id).order('observation_date', { ascending: false }).limit(100);
+          tcRawPromise = supabase.from('vw_tc_observations_expanded').select('tc_observation_id, observation_date, html_content, text_content').eq('child_tc_id', student.tc_id).order('observation_date', { ascending: false }).limit(100);
         }
 
         const [actRes, assessRes, obsRes, tcRes, tcRawRes] = await Promise.all([actPromise, assessPromise, obsPromise, tcPromise, tcRawPromise]);
+        const teacherMetaByObservationId = await loadTeacherMetaByObservationIds([
+          ...((tcRes?.data || []).map((row) => row.tc_observation_id || row.id)),
+          ...((tcRawRes?.data || []).map((row) => row.tc_observation_id)),
+        ]);
+        const mergedTc = (tcRes?.data || []).map((row) => {
+          const teacherMeta = teacherMetaByObservationId.get(String(row.tc_observation_id || row.id || '').trim()) || {};
+          return { ...row, ...teacherMeta };
+        });
+        const mergedRaw = (tcRawRes?.data || []).map((row) => {
+          const teacherMeta = teacherMetaByObservationId.get(String(row.tc_observation_id || '').trim()) || {};
+          return { ...row, ...teacherMeta };
+        });
         
         setActions(actRes.data || []);
         setManualObservationsDashboard(obsRes.data || []);
-        setTcData(tcRes?.data || []);
-        setTcDataRaw(tcRawRes?.data || []);
+        setTcData(mergedTc);
+        setTcDataRaw(mergedRaw);
 
         if (assessRes.data?.length > 0) {
            const assessmentIds = assessRes.data.map(a => a.id);
@@ -507,7 +613,7 @@ const DashboardPanel = ({ student, studentPlans, showToast, resolvedIds, setReso
         const actName = extractLessonName({html_content: raw.html_content, text_content: raw.text_content, activity_name: tc.activity_name});
         let readableText = cleanObservationNote(student, tc, raw, true) || tc.note || '';
         
-        const bucket = tc.bucket || inferTcBucket(readableText || tc.note);
+        const bucket = resolveTcBucket(tc.bucket, readableText || tc.note);
         const noteLower = (tc.note || '').toLowerCase();
         
         if (bucket === 'REWORK' || noteLower.includes('need practice') || noteLower.includes('needs practice')) {
@@ -548,7 +654,7 @@ const todayTcSummary = useMemo(() => {
     const obsId = String(tc.tc_observation_id || tc.id);
     const raw = rawMap.get(obsId) || {};
 
-    const bucket = tc.bucket || inferTcBucket(tc.note || raw.text_content);
+    const bucket = resolveTcBucket(tc.bucket, tc.note || raw.text_content);
     if (bucket !== 'INTRODUCED' && bucket !== 'PRACTICED') return; // only these two for overview
 
     const area = tc.area_name || 'General';
@@ -892,8 +998,16 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
   const [filterArea, setFilterArea] = useState('ALL');
   const [filterCategory, setFilterCategory] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [listSort, setListSort] = useState({ key: 'date', direction: 'desc' });
   
   const [obsModalOpen, setObsModalOpen] = useState(false);
+  const toggleListSort = (key) => {
+    setListSort((prev) => (
+      prev.key === key
+        ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: key === 'date' ? 'desc' : 'asc' }
+    ));
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -922,17 +1036,29 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
           tcPromise = supabase.from('vw_tc_observations_enriched')
             .select('*').eq('child_tc_id', student.tc_id).gte('observation_date', start).lte('observation_date', end).order('observation_date', { ascending: false });
           tcRawPromise = supabase.from('vw_tc_observations_expanded')
-            .select('tc_observation_id, html_content, text_content').eq('child_tc_id', student.tc_id).gte('observation_date', start).lte('observation_date', end);
+            .select('tc_observation_id, observation_date, html_content, text_content').eq('child_tc_id', student.tc_id).gte('observation_date', start).lte('observation_date', end);
           tcGridPromise = supabase.from('tc_grid_statuses')
             .select('lesson_tc_id, derived_status')
             .eq('child_tc_id', student.tc_id);
         }
 
         const [obsRes, tcRes, tcRawRes, tcGridRes] = await Promise.all([obsPromise, tcPromise, tcRawPromise, tcGridPromise]);
+        const teacherMetaByObservationId = await loadTeacherMetaByObservationIds([
+          ...((tcRes?.data || []).map((row) => row.tc_observation_id || row.id)),
+          ...((tcRawRes?.data || []).map((row) => row.tc_observation_id)),
+        ]);
+        const mergedTc = (tcRes?.data || []).map((row) => {
+          const teacherMeta = teacherMetaByObservationId.get(String(row.tc_observation_id || row.id || '').trim()) || {};
+          return { ...row, ...teacherMeta };
+        });
+        const mergedRaw = (tcRawRes?.data || []).map((row) => {
+          const teacherMeta = teacherMetaByObservationId.get(String(row.tc_observation_id || '').trim()) || {};
+          return { ...row, ...teacherMeta };
+        });
         
         setManualObservations(obsRes.data || []);
-        setTcData(tcRes?.data || []);
-        setTcDataRaw(tcRawRes?.data || []);
+        setTcData(mergedTc);
+        setTcDataRaw(mergedRaw);
         setTcGridStatuses(tcGridRes?.data || []);
 
       } catch (err) {
@@ -960,6 +1086,11 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
 
   const pTc = [];
   const pMap = new Map();
+  const enrichedObservationIds = new Set(
+    (tcData || [])
+      .map((tc) => String(tc.tc_observation_id || tc.id || '').trim())
+      .filter(Boolean)
+  );
 
   tcData.forEach(tc => {
     const id = tc.tc_observation_id || tc.id;
@@ -972,7 +1103,7 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
       text_content: raw.text_content,
       activity_name: tc.activity_name
     });
-    const bucket = tc.bucket || inferTcBucket(tc.note || raw.text_content);
+    const bucket = resolveTcBucket(tc.bucket, tc.note || raw.text_content);
     const names = splitActivityNames(actName, tc.activity_name || 'Activity');
     const lessonIds = Array.from(String(raw.text_content || '').matchAll(/\[lesson_(\d+)\]/g)).map((match) => String(match[1]));
 
@@ -999,6 +1130,28 @@ const ActivityLogPanel = ({ student, studentPlans, activeDateObj, timeFrame, sho
     });
 
     pMap.set(id, true);
+  });
+
+  tcDataRaw.forEach((raw) => {
+    const rawObsId = String(raw.tc_observation_id || '').trim();
+    if (!rawObsId || enrichedObservationIds.has(rawObsId)) return;
+
+    const synthetic = buildSyntheticTcObservation(raw, student?.tc_id || raw.child_tc_id || null);
+    if (!synthetic) return;
+
+    const cleanedNote = cleanObservationNote(student, synthetic, raw);
+    const names = splitActivityNames(synthetic.activity_name, 'Activity');
+    names.forEach((name, index) => {
+      const entryKey = `${rawObsId}-raw-${index}-${name}`;
+      pTc.push({
+        ...synthetic,
+        id: entryKey,
+        _entry_key: entryKey,
+        activity_name: name,
+        cleanedNote,
+        _raw_html: raw.html_content || '',
+      });
+    });
   });
 
   return { processedTc: pTc };
@@ -1031,7 +1184,29 @@ const uniqueCategories = useMemo(
     return true;
   });
 
-  const filteredList = filteredTc;
+  const filteredList = useMemo(() => {
+    const rows = [...filteredTc];
+    rows.sort((a, b) => {
+      const peersA = extractPeersFromHtml(a._raw_html, student?.first_name).join(', ');
+      const peersB = extractPeersFromHtml(b._raw_html, student?.first_name).join(', ');
+      switch (listSort.key) {
+        case 'area':
+          return compareValues(a.area_name || '', b.area_name || '', listSort.direction);
+        case 'category':
+          return compareValues(a.category_name || '', b.category_name || '', listSort.direction);
+        case 'status':
+          return compareValues(bucketToLabel(a.effective_status || a.bucket), bucketToLabel(b.effective_status || b.bucket), listSort.direction);
+        case 'with':
+          return compareValues(peersA, peersB, listSort.direction);
+        case 'details':
+          return compareValues(a.activity_name || '', b.activity_name || '', listSort.direction);
+        case 'date':
+        default:
+          return compareValues(getObsDate(a), getObsDate(b), listSort.direction);
+      }
+    });
+    return rows;
+  }, [filteredTc, listSort, student]);
 
 const KanbanColumn = ({ title, color, count, items }) => {
   const grouped = useMemo(() => {
@@ -1187,7 +1362,12 @@ const KanbanColumn = ({ title, color, count, items }) => {
           {filteredList.length === 0 ? (<div style={{ padding: '40px', fontSize: 13, color: UI.muted, fontStyle: 'italic', textAlign: 'center' }}>No activity logs found for this timeframe/filter.</div>) : (
             <div style={{ display: 'grid' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '85px 120px 130px 100px 140px 1fr', gap: 16, padding: '10px 24px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}`, fontSize: 11, fontWeight: 700, color: UI.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                  <div>Date</div><div>Area</div><div>Category</div><div>Status</div><div>With</div><div>Observation Details</div>
+                  <div onClick={() => toggleListSort('date')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date {sortIndicator(listSort, 'date')}</div>
+                  <div onClick={() => toggleListSort('area')} style={{ cursor: 'pointer', userSelect: 'none' }}>Area {sortIndicator(listSort, 'area')}</div>
+                  <div onClick={() => toggleListSort('category')} style={{ cursor: 'pointer', userSelect: 'none' }}>Category {sortIndicator(listSort, 'category')}</div>
+                  <div onClick={() => toggleListSort('status')} style={{ cursor: 'pointer', userSelect: 'none' }}>Status {sortIndicator(listSort, 'status')}</div>
+                  <div onClick={() => toggleListSort('with')} style={{ cursor: 'pointer', userSelect: 'none' }}>With {sortIndicator(listSort, 'with')}</div>
+                  <div onClick={() => toggleListSort('details')} style={{ cursor: 'pointer', userSelect: 'none' }}>Observation Details {sortIndicator(listSort, 'details')}</div>
               </div>
               {filteredList.map((o) => {
   const peersList = extractPeersFromHtml(o._raw_html, student?.first_name);
@@ -1234,6 +1414,11 @@ const KanbanColumn = ({ title, color, count, items }) => {
         {o.activity_name && (
           <div style={{ fontSize: 13, fontWeight: 600, color: UI.text }}>
             {o.activity_name}
+          </div>
+        )}
+        {o.teacher_name && (
+          <div style={{ fontSize: 10, color: UI.muted, fontWeight: 600 }}>
+            Teacher: {o.teacher_name}
           </div>
         )}
 
@@ -1352,12 +1537,17 @@ const ProgressMatrix = ({ student, showToast }) => {
 
         const latestActivityByLessonId = new Map();
         const latestObservationByDisplayKey = new Map();
+        const enrichedObservationIds = new Set(
+          (resEnriched.data || [])
+            .map((tc) => String(tc.tc_observation_id || tc.id || '').trim())
+            .filter(Boolean)
+        );
 
         (resEnriched.data || []).forEach((tc) => {
           const obsId = String(tc.tc_observation_id || tc.id || '');
           const raw = rawMap.get(obsId) || {};
           const readableText = String(raw.text_content || tc.note || '');
-          const bucket = tc.bucket || inferTcBucket(readableText);
+          const bucket = resolveTcBucket(tc.bucket, readableText);
           const observationDate = tc.observation_date || tc.date || null;
           const extractedName = extractLessonName({
             html_content: raw.html_content,
@@ -1387,6 +1577,29 @@ const ProgressMatrix = ({ student, showToast }) => {
               if (!currentLesson || String(item.observation_date || '') >= String(currentLesson.observation_date || '')) {
                 latestActivityByLessonId.set(lessonId, item);
               }
+            }
+          });
+        });
+
+        (resRaw.data || []).forEach((raw) => {
+          const obsId = String(raw.tc_observation_id || '').trim();
+          if (!obsId || enrichedObservationIds.has(obsId)) return;
+
+          const synthetic = buildSyntheticTcObservation(raw, student.tc_id);
+          if (!synthetic) return;
+
+          splitActivityNames(synthetic.activity_name, 'Activity').forEach((name) => {
+            const item = {
+              area_name: synthetic.area_name,
+              category_name: synthetic.category_name,
+              activity_name: name,
+              bucket: synthetic.bucket,
+              observation_date: synthetic.observation_date,
+            };
+            const displayKey = [item.area_name, item.category_name, item.activity_name].map(normalizeKey).join('|');
+            const currentDisplay = latestObservationByDisplayKey.get(displayKey);
+            if (!currentDisplay || String(item.observation_date || '') >= String(currentDisplay.observation_date || '')) {
+              latestObservationByDisplayKey.set(displayKey, item);
             }
           });
         });

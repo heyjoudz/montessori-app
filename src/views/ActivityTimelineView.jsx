@@ -133,12 +133,64 @@ const formatStudentName = (s) => {
   return name || 'Unknown';
 };
 
+const compareValues = (left, right, direction = 'asc') => {
+  const a = String(left ?? '').toLowerCase().trim();
+  const b = String(right ?? '').toLowerCase().trim();
+  if (a === b) return 0;
+  const result = a < b ? -1 : 1;
+  return direction === 'asc' ? result : -result;
+};
+
+const sortIndicator = (sortState, key) => {
+  if (sortState.key !== key) return '↕';
+  return sortState.direction === 'asc' ? '↑' : '↓';
+};
+
+const normalizeTeacherName = (value) => String(value || '').trim() || 'Unknown';
+
+const loadTeacherMetaByObservationIds = async (observationIds) => {
+  const ids = [...new Set((Array.isArray(observationIds) ? observationIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length === 0) return new Map();
+
+  const rows = [];
+  const chunkSize = 500;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const res = await supabase
+      .from('tc_observations')
+      .select('tc_observation_id, teacher_name, teacher_tc_id')
+      .in('tc_observation_id', chunk);
+    if (res.error) throw res.error;
+    rows.push(...(res.data || []));
+  }
+
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = String(row.tc_observation_id || '').trim();
+    if (!key) return;
+    map.set(key, {
+      teacher_name: row.teacher_name || null,
+      teacher_tc_id: row.teacher_tc_id || null,
+    });
+  });
+  return map;
+};
+
 const inferBucket = (text) => {
   const t = String(text || '').toLowerCase();
   if (t.includes('reintroduced') || t.includes('re-introduced') || t.includes('re-present') || t.includes('represent') || t.includes('need')) return 'REWORK';
-  if (t.includes('practiced')) return 'PRACTICED';
+  if (t.includes('practiced') || t.includes('practicing') || t.includes('practice ') || t.includes('reviewed') || t.includes('review ')) return 'PRACTICED';
   if (t.includes('mastered')) return 'MASTERED';
   return 'INTRODUCED';
+};
+
+const resolveBucket = (existingBucket, text) => {
+  const inferredBucket = inferBucket(text);
+  const current = String(existingBucket || '').toUpperCase().trim();
+  if (!current) return inferredBucket;
+  if (current === 'INTRODUCED' && inferredBucket !== 'INTRODUCED') return inferredBucket;
+  if (current === 'OTHER') return inferredBucket || current;
+  return current;
 };
 
 const extractLessonName = (rec) => {
@@ -152,8 +204,55 @@ const extractLessonName = (rec) => {
     }
     if (rec.activity_name) return rec.activity_name;
     const textToSearch = rec.note || rec.text_content || html.replace(/<[^>]+>/g, '');
-    const textMatch = textToSearch.match(/(?:practiced|introduced to|mastered|re-present|needs more|needs practice|review|worked with)\s+(.*?)(?:\.| and | but | worked | he | she |$)/i);
-    return textMatch ? textMatch[1].trim() : 'General Activity';
+    const textMatch = textToSearch.match(/(?:practic(?:ed|e)|introduced(?:\s+to)?|mastered|re-?present(?:ed)?|needs more|needs practice|review(?:ed)?|worked with)\s+(.*?)(?:\.| but | worked | he | she |$)/i);
+    if (textMatch?.[1]) return textMatch[1].trim().replace(/\s+/g, ' ');
+    return 'General Activity';
+};
+
+const inferAreaAndCategoryFromActivity = (activityName) => {
+  const name = String(activityName || '').trim();
+  const lower = name.toLowerCase();
+  if (!name) return { area_name: 'General', category_name: 'General' };
+  if (/[\u0600-\u06ff]/.test(name)) return { area_name: 'Arabic Language', category_name: 'Arabic Language' };
+  if (/(spelling|cvc|sound|letter|phon|reading|waseca|word)/i.test(lower)) {
+    return { area_name: 'Language', category_name: 'Language' };
+  }
+  if (/(art|craft|theme activities|paper boat|airplane|cardboard car)/i.test(lower)) {
+    return { area_name: 'Culture', category_name: 'Art' };
+  }
+  return { area_name: 'General', category_name: 'General' };
+};
+
+const buildSyntheticTcObservation = (raw, childTcId = null) => {
+  const observationId = String(raw?.tc_observation_id || '').trim();
+  if (!observationId) return null;
+
+  const activityName = extractLessonName({
+    html_content: raw?.html_content,
+    text_content: raw?.text_content,
+  });
+  if (!activityName || activityName === 'General Activity') return null;
+
+  const bucket = inferBucket(raw?.text_content || raw?.html_content || '');
+  const meta = inferAreaAndCategoryFromActivity(activityName);
+
+  return {
+    id: `raw-${observationId}-${childTcId || raw?.child_tc_id || 'na'}`,
+    tc_observation_id: observationId,
+    observation_date: raw?.observation_date || null,
+    child_tc_id: childTcId || raw?.child_tc_id || null,
+    child_tc_ids: childTcId || raw?.child_tc_id ? [String(childTcId || raw.child_tc_id)] : [],
+    activity_name: activityName,
+    area_name: meta.area_name,
+    category_name: meta.category_name,
+    bucket,
+    effective_status: bucket,
+    note: raw?.text_content || '',
+    teacher_name: raw?.teacher_name || null,
+    teacher_tc_id: raw?.teacher_tc_id || null,
+    raw_html: raw?.html_content || '',
+    raw_text: raw?.text_content || '',
+  };
 };
 
 const cleanNoteCoordinator = (note, studentsList, activityName) => {
@@ -569,11 +668,13 @@ const [activeDate, setActiveDate] = useState(() => clampToToday(new Date()));
   const [catActQuery, setCatActQuery] = useState('');
   const [filterArea, setFilterArea] = useState('ALL');
   const [filterCategory, setFilterCategory] = useState('ALL');
+  const [filterTeacher, setFilterTeacher] = useState('ALL');
   
   // Tab States
   const [expandAll, setExpandAll] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false); 
   const [timelineFormat, setTimelineFormat] = useState('KANBAN'); // 'KANBAN' or 'LIST'
+  const [timelineListSort, setTimelineListSort] = useState({ key: 'date', direction: 'desc' });
 
   // Add this near your state declarations
 useEffect(() => {
@@ -587,6 +688,13 @@ useEffect(() => {
 }, [activeTab]);
 
   const translate = (s) => (isTranslating ? applyTranslations(s) : s);
+  const toggleTimelineListSort = (key) => {
+    setTimelineListSort((prev) => (
+      prev.key === key
+        ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: key === 'date' ? 'desc' : 'asc' }
+    ));
+  };
 
   const toggleCompletePending = async (itemId) => {
     const isResolved = resolvedIds.has(itemId);
@@ -686,26 +794,24 @@ useEffect(() => {
             .limit(100000); 
 
         if (matrixRes.data) {
-            const observationIds = [...new Set(
-              (matrixRes.data || [])
-                .map((tc) => tc.tc_observation_id || tc.id)
-                .filter(Boolean)
-            )];
-
-            const rawRows = [];
-            const chunkSize = 500;
-            for (let i = 0; i < observationIds.length; i += chunkSize) {
-              const chunk = observationIds.slice(i, i + chunkSize);
-              const rawChunkRes = await supabase
-                .from('vw_tc_observations_expanded')
-                .select('tc_observation_id, html_content, text_content')
-                .in('tc_observation_id', chunk);
-              if (rawChunkRes.error) throw rawChunkRes.error;
-              rawRows.push(...(rawChunkRes.data || []));
-            }
+            const rawExpandedRes = await supabase
+              .from('vw_tc_observations_expanded')
+              .select('tc_observation_id, observation_date, child_tc_id, html_content, text_content')
+              .order('observation_date', { ascending: false })
+              .limit(100000);
+            if (rawExpandedRes.error) throw rawExpandedRes.error;
+            const rawRows = rawExpandedRes.data || [];
+            const teacherMetaByObservationId = await loadTeacherMetaByObservationIds([
+              ...(matrixRes.data || []).map((row) => row.tc_observation_id || row.id),
+              ...rawRows.map((row) => row.tc_observation_id),
+            ]);
 
             const rawMatrixMap = new Map();
-            rawRows.forEach(r => { if (r.tc_observation_id) rawMatrixMap.set(String(r.tc_observation_id), r); });
+            rawRows.forEach(r => {
+              if (!r.tc_observation_id) return;
+              const key = String(r.tc_observation_id);
+              if (!rawMatrixMap.has(key)) rawMatrixMap.set(key, r);
+            });
 
             const gridStatusByStudentLesson = new Map();
             (tcGridStatuses.length ? tcGridStatuses : gridRows).forEach((row) => {
@@ -737,9 +843,15 @@ useEffect(() => {
             };
 
             const procMatrix = [];
+            const enrichedObservationIds = new Set(
+              (matrixRes.data || [])
+                .map((tc) => String(tc.tc_observation_id || tc.id || '').trim())
+                .filter(Boolean)
+            );
             (matrixRes.data || []).forEach(tc => {
                 const id = tc.tc_observation_id || tc.id;
                 const raw = rawMatrixMap.get(String(id)) || {};
+                const teacherMeta = teacherMetaByObservationId.get(String(id)) || {};
                 const actName = extractLessonName({
                   html_content: raw.html_content,
                   text_content: raw.text_content,
@@ -752,7 +864,7 @@ useEffect(() => {
 
                 const lessonIds = Array.from(String(raw.text_content || '').matchAll(/\[lesson_(\d+)\]/g)).map((match) => String(match[1]));
                 names.forEach((name, index) => {
-                    const bucket = tc.bucket || inferBucket(tc.note || raw.text_content);
+                    const bucket = resolveBucket(tc.bucket, tc.note || raw.text_content);
                     const lessonTcId = lessonIds[index] || (lessonIds.length === 1 ? lessonIds[0] : null);
                     const childTcIds = Array.isArray(tc.child_tc_ids) && tc.child_tc_ids.length > 0
                       ? tc.child_tc_ids
@@ -772,11 +884,29 @@ useEffect(() => {
                         effective_status: effectiveStatus,
                         lesson_tc_id: lessonTcId,
                         current_grid_status: currentGridStatus,
+                        teacher_name: tc.teacher_name || teacherMeta.teacher_name || raw.teacher_name || null,
+                        teacher_tc_id: tc.teacher_tc_id || teacherMeta.teacher_tc_id || raw.teacher_tc_id || null,
                         raw_html: raw.html_content || '',
                         raw_text: raw.text_content || ''
                       });
                     });
                 });
+            });
+
+            rawRows.forEach((raw) => {
+              const rawObsId = String(raw.tc_observation_id || '').trim();
+              if (!rawObsId || enrichedObservationIds.has(rawObsId)) return;
+
+              const teacherMeta = teacherMetaByObservationId.get(rawObsId) || {};
+              const synthetic = buildSyntheticTcObservation({ ...raw, ...teacherMeta }, raw.child_tc_id);
+              if (!synthetic) return;
+
+              splitActivityNames(synthetic.activity_name, 'Activity').forEach((name) => {
+                procMatrix.push({
+                  ...synthetic,
+                  activity_name: name,
+                });
+              });
             });
             setFullMatrixData(procMatrix);
         }
@@ -852,6 +982,10 @@ useEffect(() => {
   const activeDataSource = dateFilteredData;
   const uniqueAreas = useMemo(() => [...new Set(activeDataSource.map(r => translate(r.area_name || 'General')))].sort(), [activeDataSource, isTranslating]);
   const uniqueCategories = useMemo(() => [...new Set(activeDataSource.filter(r => filterArea === 'ALL' || translate(r.area_name || 'General') === filterArea).map(r => translate(r.category_name || 'Uncategorized')))].sort(), [activeDataSource, filterArea, isTranslating]);
+  const uniqueTeachers = useMemo(
+    () => [...new Set(activeDataSource.map((r) => normalizeTeacherName(r.teacher_name)))].sort(),
+    [activeDataSource]
+  );
 
   /**
    * =========================
@@ -865,9 +999,11 @@ useEffect(() => {
           const areaName = translate(r.area_name || 'General');
           const categoryName = translate(r.category_name || 'Uncategorized');
           const activityName = translate(r.activity_name || 'Untitled Activity');
+          const teacherName = normalizeTeacherName(r.teacher_name);
           
           if (filterArea !== 'ALL' && areaName !== filterArea) return false;
           if (filterCategory !== 'ALL' && categoryName !== filterCategory) return false;
+          if (filterTeacher !== 'ALL' && teacherName !== filterTeacher) return false;
           if (q && !categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return false;
           
           const stus = filterStudentRefs(r.child_tc_ids || [r.child_tc_id]);
@@ -904,7 +1040,14 @@ useEffect(() => {
           stus.forEach(s => {
               const currentMax = actGroup.studentsMap.get(s.tc_id)?.date;
               if (!currentMax || String(r.observation_date).slice(0, 10) > String(currentMax).slice(0, 10)) {
-                  actGroup.studentsMap.set(s.tc_id, { name: s.name, date: r.observation_date, tc_id: s.tc_id });
+                  const classroomName = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
+                  actGroup.studentsMap.set(s.tc_id, {
+                    name: s.name,
+                    date: r.observation_date,
+                    tc_id: s.tc_id,
+                    classroom_id: s.classroom_id ?? null,
+                    classroom_name: classroomName,
+                  });
               }
           });
       });
@@ -914,7 +1057,7 @@ useEffect(() => {
           studentsList: Array.from(ag.studentsMap.values()).sort((a,b) => String(b.date).localeCompare(String(a.date)))
       }));
       
-  }, [dateFilteredData, filterClassroomId, selectedStudentTcId, filterArea, filterCategory, catActQuery, isTranslating, studentsByTcId]);
+  }, [dateFilteredData, filterClassroomId, selectedStudentTcId, filterArea, filterCategory, filterTeacher, catActQuery, isTranslating, studentsByTcId, classrooms]);
 
   const cols = {
     I: kanbanItems.filter(t => t.bucket === 'INTRODUCED'),
@@ -945,9 +1088,11 @@ useEffect(() => {
                   const areaName = translate(r.area_name || 'General');
                   const categoryName = translate(r.category_name || 'Uncategorized');
                   const activityName = translate(r.activity_name || 'Untitled Activity');
+                  const teacherName = normalizeTeacherName(r.teacher_name);
 
                   if (filterArea !== 'ALL' && areaName !== filterArea) return;
                   if (filterCategory !== 'ALL' && categoryName !== filterCategory) return;
+                  if (filterTeacher !== 'ALL' && teacherName !== filterTeacher) return;
                   if (q && !categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return;
                   
                   let peersList = [];
@@ -992,7 +1137,7 @@ if (actName && existing.detail && existing.detail !== actName) {
       });
       
       return Array.from(obsMap.values()).sort((a,b) => String(b.date).localeCompare(String(a.date)));
-}, [dateFilteredData, filterClassroomId, selectedStudentTcId, catActQuery, filterArea, filterCategory, isTranslating, studentsByTcId, resolvedIds]);
+}, [dateFilteredData, filterClassroomId, selectedStudentTcId, catActQuery, filterArea, filterCategory, filterTeacher, isTranslating, studentsByTcId, resolvedIds]);
 
   const pendingByArea = useMemo(() => {
       const grouped = combinedFollowUps.reduce((acc, item) => {
@@ -1024,32 +1169,78 @@ if (actName && existing.detail && existing.detail !== actName) {
       const areaName = translate(r.area_name || 'General');
       const categoryName = translate(r.category_name || 'Uncategorized');
       const activityName = translate(r.activity_name || 'Untitled Activity');
+      const teacherName = normalizeTeacherName(r.teacher_name);
 
       if (filterArea !== 'ALL' && areaName !== filterArea) return false;
       if (filterCategory !== 'ALL' && categoryName !== filterCategory) return false;
+      if (filterTeacher !== 'ALL' && teacherName !== filterTeacher) return false;
       if (q && !categoryName.toLowerCase().includes(q) && !activityName.toLowerCase().includes(q) && !areaName.toLowerCase().includes(q)) return false;
 
       const stus = filterStudentRefs(r.child_tc_ids || [r.child_tc_id]);
       return stus.length > 0;
     });
-  }, [dateFilteredData, filterArea, filterCategory, catActQuery, selectedStudentTcId, filterClassroomId, isTranslating, studentsByTcId]);
+  }, [dateFilteredData, filterArea, filterCategory, filterTeacher, catActQuery, selectedStudentTcId, filterClassroomId, isTranslating, studentsByTcId]);
+
+  const timelineListRows = useMemo(() => {
+    const rows = (analyticsRows || []).map((item) => {
+      const studentLabel = filterStudentRefs(item.child_tc_ids || [item.child_tc_id]).map((s) => {
+        const className = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
+        return `${s.name} • ${className}`;
+      }).join(', ');
+
+      return {
+        ...item,
+        _student_label: studentLabel,
+        _display_area: translate(item.area_name || 'General'),
+        _display_activity: translate(item.activity_name || 'Untitled Activity'),
+        _display_status: String(item.effective_status || item.current_grid_status || item.bucket || inferBucket(item.note || item.raw_text)),
+        _display_teacher: normalizeTeacherName(item.teacher_name),
+      };
+    }).filter((item) => item._student_label);
+
+    rows.sort((a, b) => {
+      switch (timelineListSort.key) {
+        case 'student':
+          return compareValues(a._student_label, b._student_label, timelineListSort.direction);
+        case 'area':
+          return compareValues(a._display_area, b._display_area, timelineListSort.direction);
+        case 'activity':
+          return compareValues(a._display_activity, b._display_activity, timelineListSort.direction);
+        case 'teacher':
+          return compareValues(a._display_teacher, b._display_teacher, timelineListSort.direction);
+        case 'status':
+          return compareValues(a._display_status, b._display_status, timelineListSort.direction);
+        case 'date':
+        default:
+          return compareValues(String(a.observation_date || '').slice(0, 10), String(b.observation_date || '').slice(0, 10), timelineListSort.direction);
+      }
+    });
+
+    return rows;
+  }, [analyticsRows, classrooms, timelineListSort, isTranslating, filterClassroomId, selectedStudentTcId, studentsByTcId]);
 
   const analyticsSummary = useMemo(() => {
     const byArea = new Map();
     const byActivity = new Map();
+    const byTeacher = new Map();
     const byStudent = new Map();
+    const byClassroom = new Map();
     const status = { INTRODUCED: 0, PRACTICED: 0, REWORK: 0, MASTERED: 0 };
 
     analyticsRows.forEach((row) => {
       const area = translate(row.area_name || 'General');
       const activity = translate(row.activity_name || 'Untitled Activity');
       const bucket = String(row.effective_status || row.current_grid_status || row.bucket || 'INTRODUCED').toUpperCase();
+      const teacher = normalizeTeacherName(row.teacher_name);
       byArea.set(area, (byArea.get(area) || 0) + 1);
       byActivity.set(activity, (byActivity.get(activity) || 0) + 1);
+      byTeacher.set(teacher, (byTeacher.get(teacher) || 0) + 1);
       if (status[bucket] != null) status[bucket] += 1;
 
-      filterStudentRefs(row.child_tc_ids || [row.child_tc_id]).forEach((s) => {
-        byStudent.set(s.name, (byStudent.get(s.name) || 0) + 1);
+      filterStudentRefs(row.child_tc_ids || [row.child_tc_id]).forEach((student) => {
+        byStudent.set(student.name, (byStudent.get(student.name) || 0) + 1);
+        const classroomName = classrooms.find((c) => String(c.id) === String(student.classroom_id))?.name || 'Unknown Class';
+        byClassroom.set(classroomName, (byClassroom.get(classroomName) || 0) + 1);
       });
     });
 
@@ -1061,10 +1252,13 @@ if (actName && existing.detail && existing.detail !== actName) {
     return {
       topAreas: toTop(byArea),
       topActivities: toTop(byActivity),
+      topTeachers: toTop(byTeacher),
       topStudents: toTop(byStudent),
+      topClassrooms: toTop(byClassroom),
+      teachersCovered: byTeacher.size,
       status,
     };
-  }, [analyticsRows, filterClassroomId, selectedStudentTcId, isTranslating, studentsByTcId]);
+  }, [analyticsRows, filterClassroomId, selectedStudentTcId, isTranslating, studentsByTcId, classrooms]);
 
   /**
    * =========================
@@ -1173,6 +1367,12 @@ if (timeFrame === 'DAY') {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12 }}>
                                   {areaItems.map(item => {
                                       const isItemExpanded = !!expandedItems[item.id];
+                                      const groupedStudents = (item.studentsList || []).reduce((acc, student) => {
+                                          const classroomName = student.classroom_name || 'Unknown Class';
+                                          if (!acc[classroomName]) acc[classroomName] = [];
+                                          acc[classroomName].push(student);
+                                          return acc;
+                                      }, {});
                                       return (
                                       <div key={item.id} style={{ background: '#fff', borderRadius: R, border: `1px solid ${UI.border}`, borderLeft: `3px solid ${subjStyle.accent}`, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
                                           <button
@@ -1188,10 +1388,24 @@ if (timeFrame === 'DAY') {
 
                                           {isItemExpanded && (
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                              {item.studentsList.map(s => (
-                                                  <div key={s.tc_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '4px 8px', borderRadius: 4, border: `1px solid ${UI.border}` }}>
-                                                      <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary, display: 'flex', alignItems: 'center', gap: 6 }}><User size={12}/> {s.name}</div>
-                                                      <div style={{ fontSize: 10, color: UI.muted }}>{formatShortDateStr(s.date)}</div>
+                                              {item.teacher_name && (
+                                                  <div style={{ fontSize: 10, color: UI.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, padding: '0 2px 4px' }}>
+                                                      Teacher: {item.teacher_name}
+                                                  </div>
+                                              )}
+                                              {(filterClassroomId === 'ALL' ? Object.entries(groupedStudents) : [['', item.studentsList || []]]).map(([classroomName, students]) => (
+                                                  <div key={classroomName || 'all'} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                      {filterClassroomId === 'ALL' && classroomName && (
+                                                          <div style={{ fontSize: 10, color: UI.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 2px 0' }}>
+                                                              {classroomName}
+                                                          </div>
+                                                      )}
+                                                      {students.map(s => (
+                                                          <div key={s.tc_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '4px 8px', borderRadius: 4, border: `1px solid ${UI.border}` }}>
+                                                              <div style={{ fontSize: 11, fontWeight: 600, color: UI.primary, display: 'flex', alignItems: 'center', gap: 6 }}><User size={12}/> {s.name}</div>
+                                                              <div style={{ fontSize: 10, color: UI.muted }}>{formatShortDateStr(s.date)}</div>
+                                                          </div>
+                                                      ))}
                                                   </div>
                                               ))}
                                           </div>
@@ -1416,6 +1630,16 @@ if (timeFrame === 'DAY') {
               </div>
             </div>
 
+            <div>
+              <Label>Teacher</Label>
+              <div style={{ marginTop: 6 }}>
+                <Field as="select" value={filterTeacher} onChange={e => setFilterTeacher(e.target.value)} style={{ height: 38, fontSize: 13 }}>
+                  <option value="ALL">All Teachers</option>
+                  {uniqueTeachers.map(t => <option key={t} value={t}>{t}</option>)}
+                </Field>
+              </div>
+            </div>
+
           </div>
         </ThemedCard>
       </div>
@@ -1502,23 +1726,24 @@ if (timeFrame === 'DAY') {
 
 {activeTab === 'TIMELINE' && timelineFormat === 'LIST' && (
   <ThemedCard style={{ padding: 0, overflow: 'hidden' }}>
-    <div style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.55fr) 108px', gap: 12, padding: '10px 16px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}`, fontSize: 11, fontWeight: 700, color: UI.muted, textTransform: 'uppercase' }}>
-      <div>Date</div><div>Student / Classroom</div><div>Area</div><div>Activity</div><div>Status</div>
+    <div style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.25fr) minmax(130px, 0.95fr) 108px', gap: 12, padding: '10px 16px', background: '#f8fafc', borderBottom: `1px solid ${UI.border}`, fontSize: 11, fontWeight: 700, color: UI.muted, textTransform: 'uppercase' }}>
+      <div onClick={() => toggleTimelineListSort('date')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date {sortIndicator(timelineListSort, 'date')}</div>
+      <div onClick={() => toggleTimelineListSort('student')} style={{ cursor: 'pointer', userSelect: 'none' }}>Student / Classroom {sortIndicator(timelineListSort, 'student')}</div>
+      <div onClick={() => toggleTimelineListSort('area')} style={{ cursor: 'pointer', userSelect: 'none' }}>Area {sortIndicator(timelineListSort, 'area')}</div>
+      <div onClick={() => toggleTimelineListSort('activity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Activity {sortIndicator(timelineListSort, 'activity')}</div>
+      <div onClick={() => toggleTimelineListSort('teacher')} style={{ cursor: 'pointer', userSelect: 'none' }}>Teacher {sortIndicator(timelineListSort, 'teacher')}</div>
+      <div onClick={() => toggleTimelineListSort('status')} style={{ cursor: 'pointer', userSelect: 'none' }}>Status {sortIndicator(timelineListSort, 'status')}</div>
     </div>
-    {dateFilteredData.map((item, idx) => {
-      const stus = filterStudentRefs(item.child_tc_ids || [item.child_tc_id]).map((s) => {
-        const className = classrooms.find(c => String(c.id) === String(s.classroom_id))?.name || 'Unknown Class';
-        return `${s.name} • ${className}`;
-      }).join(', ');
-      if (!stus) return null;
+    {timelineListRows.map((item, idx) => {
       return (
-        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.55fr) 108px', gap: 12, padding: '14px 16px', borderBottom: `1px solid ${UI.border}`, background: '#fff', alignItems: 'center' }}>
+        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '78px minmax(165px, 1.05fr) minmax(90px, 0.7fr) minmax(170px, 1.25fr) minmax(130px, 0.95fr) 108px', gap: 12, padding: '14px 16px', borderBottom: `1px solid ${UI.border}`, background: '#fff', alignItems: 'center' }}>
           <div style={{ fontSize: 12, color: UI.muted }}>{formatShortDateStr(item.observation_date)}</div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: UI.primary, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{stus}</div>
-          <div style={{ fontSize: 12, color: UI.text }}>{item.area_name}</div>
-          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.35 }}>{item.activity_name || 'Untitled Activity'}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: UI.primary, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item._student_label}</div>
+          <div style={{ fontSize: 12, color: UI.text }}>{item._display_area}</div>
+          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.35 }}>{item._display_activity}</div>
+          <div style={{ fontSize: 12, color: UI.text, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{item._display_teacher}</div>
           <div>
-            <StatusLabelBadge status={item.effective_status || item.current_grid_status || item.bucket || inferBucket(item.note || item.raw_text)} />
+            <StatusLabelBadge status={item._display_status} />
           </div>
         </div>
       )
@@ -1602,24 +1827,17 @@ if (timeFrame === 'DAY') {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
               <StatCard title="Observations" count={analyticsRows.length} icon={BarChart3} color={UI.primary} />
+              <StatCard title="Teachers" count={analyticsSummary.teachersCovered} icon={User} color={UI.secondary} />
               <StatCard title="Introduced" count={analyticsSummary.status.INTRODUCED} icon={History} color="#1E88E5" />
               <StatCard title="Practiced" count={analyticsSummary.status.PRACTICED} icon={BookOpen} color="#F5B041" />
-              <StatCard title="Needs Review" count={analyticsSummary.status.REWORK} icon={AlertCircle} color="#E53935" />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-              <AnalyticsPieCard
-                title="Status Breakdown"
-                segments={[
-                  { label: 'I', value: analyticsSummary.status.INTRODUCED, color: '#1E88E5' },
-                  { label: 'P', value: analyticsSummary.status.PRACTICED, color: '#F5B041' },
-                  { label: 'R', value: analyticsSummary.status.REWORK, color: '#E53935' },
-                  { label: 'M', value: analyticsSummary.status.MASTERED, color: '#233876' },
-                ]}
-              />
+              <AnalyticsBarList title="Most Active Teachers" items={analyticsSummary.topTeachers} color={UI.secondary} />
+              <AnalyticsBarList title="Most Active Classrooms" items={analyticsSummary.topClassrooms} color={UI.accent} />
+              <AnalyticsBarList title="Most Active Students" items={analyticsSummary.topStudents} color={UI.accentYellow} />
               <AnalyticsBarList title="Most Worked Areas" items={analyticsSummary.topAreas} color={UI.primary} />
-              <AnalyticsBarList title="Most Worked Activities" items={analyticsSummary.topActivities} color={UI.accentYellow} />
-              <AnalyticsBarList title="Most Active Students" items={analyticsSummary.topStudents} color={UI.accent} />
+              <AnalyticsBarList title="Most Worked Activities" items={analyticsSummary.topActivities} color="#F4C473" />
             </div>
           </div>
         )}
