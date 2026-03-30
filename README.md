@@ -4,7 +4,7 @@ Montessori OS is a planning, progress review, and classroom operations platform 
 
 I started this project after seeing how much work at a partner Montessori school in Lebanon was still being handled through scattered Word documents, ad hoc planning habits, and a legacy school tool that did not support flexible classroom planning well. The school already used Transparent Classroom, but important workflows were still hard to manage, difficult to standardize, and too dependent on manual coordination.
 
-This project is my attempt to build a more modern operational layer around those workflows: one that supports teachers, coordinators, administrators, and eventually parents through clearer planning, individualized follow-through, stronger visibility, better analytics, and cleaner data flow.
+This project is a personal side project I have been building in my free time. It is my attempt to build a more modern operational layer around those workflows: one that supports teachers, coordinators, administrators, and eventually parents through clearer planning, individualized follow-through, stronger visibility, better analytics, and cleaner data flow.
 
 ## Problem Context
 
@@ -305,11 +305,11 @@ If you are reviewing this project without a live login:
 
 This is an active in-progress product. The core architecture, multi-view workflow structure, analytics layer, smart matching logic, and integration backbone are already in place. Ongoing work includes refining data quality, continuing workflow polish, strengthening presentation, and expanding the product toward broader school and parent use cases.
 
-The product is being developed around a real school workflow and is currently in early live testing with a teacher.
+The product is being developed around a real school workflow and is currently in early live testing with a coordinator.
 
 ## Why This Project Matters
 
-If you are reviewing this repository as part of a job application, the most relevant signal is not the education domain itself. The relevant signal is how this project reflects my approach to:
+The most relevant signal in this project is how it reflects my approach to:
 
 - ambiguous real-world problems
 - workflow-heavy product design
